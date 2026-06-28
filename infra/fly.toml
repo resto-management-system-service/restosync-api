@@ -25,7 +25,7 @@ primary_region = "iad"
     interval     = "30s"
     timeout      = "5s"
     grace_period = "10s"
-    path         = "/api"
+    path         = "/health"
 
 [[vm]]
   memory = "512mb"

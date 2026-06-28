@@ -3,9 +3,9 @@ export default () => ({
   port: parseInt(process.env.APP_PORT || '3000', 10),
   apiPrefix: process.env.API_PREFIX || 'api',
   jwt: {
-    secret: process.env.JWT_SECRET || 'change-me',
+    secret: process.env.JWT_SECRET,
     expiresIn: process.env.JWT_EXPIRES_IN || '15m',
-    refreshSecret: process.env.JWT_REFRESH_SECRET || 'change-me-refresh',
+    refreshSecret: process.env.JWT_REFRESH_SECRET,
     refreshExpiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '7d',
   },
   stripe: {
