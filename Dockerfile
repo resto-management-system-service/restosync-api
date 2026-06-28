@@ -23,6 +23,7 @@ COPY prisma ./prisma
 RUN npm ci --omit=dev && npx prisma generate
 
 COPY --from=builder /app/dist ./dist
+RUN test -f dist/main.js || (echo "dist/main.js missing — nest build produced no output" && exit 1)
 
 EXPOSE 3000
 CMD ["node", "dist/main"]
