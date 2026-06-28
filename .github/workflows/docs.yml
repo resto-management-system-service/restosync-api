@@ -57,9 +57,9 @@ jobs:
       - name: Assemble static site
         run: cp scripts/swagger-ui.html site/index.html
 
-      - name: Deploy to Cloudflare Pages
+      - name: Deploy to Cloudflare (Worker static assets)
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy site --project-name=restosync-api-docs
+          command: deploy
