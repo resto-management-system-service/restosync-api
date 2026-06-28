@@ -62,4 +62,6 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          # v4 is required for assets-only Workers (no `main` script).
+          wranglerVersion: "4"
           command: deploy
