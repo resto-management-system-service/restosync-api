@@ -1,0 +1,9 @@
+{
+  // Static-assets-only Worker that serves the generated Swagger docs.
+  // Deployed by .github/workflows/docs.yml via `wrangler deploy`.
+  "name": "restosync-api-docs",
+  "compatibility_date": "2024-11-01",
+  "assets": {
+    "directory": "./site"
+  }
+}
