@@ -34,6 +34,31 @@ Seed creates an admin: `admin@restosync.local` / `Admin123!`.
 docker compose up --build       # Postgres + API (runs migrations on boot)
 ```
 
+## API docs & client publishing
+
+The OpenAPI spec is the **contract** shared with consumers (e.g. `restosync-web`). On every
+push to `main`, the [`Docs` workflow](.github/workflows/docs.yml):
+
+1. Generates the spec — `npm run openapi:generate` boots the app and writes
+   `site/openapi.json` (`scripts/generate-openapi.ts`, reusing `src/swagger.config.ts`).
+2. Runs **`oasdiff`** between the freshly generated spec and the **currently published**
+   one to detect whether the contract actually changed.
+3. **Only on a change**: deploys the Swagger UI + spec to Cloudflare
+   (live at <https://restosync-api-docs.iznomag.workers.dev>) and sends a
+   `repository_dispatch` (`update-openapi-client`) to **`restosync-web`**, which regenerates
+   its typed client and opens a rolling `chore/update-openapi` PR. No contract change ⇒ no
+   deploy, no notification.
+
+```
+push to main → generate spec → oasdiff
+   ├─ unchanged → done (no deploy, no dispatch)
+   └─ changed   → deploy docs + dispatch → restosync-web opens/updates client PR
+```
+
+**Setup (one-time):** repo secret **`OPENAPI_SYNC_TOKEN`** — a fine-grained PAT with
+**Contents** + **Pull requests** read/write on `restosync-web` — used to send the dispatch.
+Regenerate the spec locally with `npm run openapi:generate` (needs a reachable Postgres).
+
 ## Modules
 
 | Module     | Highlights                                                              |
@@ -78,4 +103,5 @@ stripe trigger payment_intent.succeeded
 | `npm run prisma:migrate`| create/apply a dev migration     |
 | `npm run prisma:studio` | open Prisma Studio               |
 | `npm run prisma:seed`   | seed admin + sample menu         |
+| `npm run openapi:generate` | write OpenAPI spec to `site/openapi.json` |
 | `npm run lint`          | eslint --fix                     |
