@@ -15,11 +15,11 @@ Prisma + PostgreSQL, JWT auth with roles, Stripe payments, and Swagger docs.
 
 ```bash
 cp .env.example .env            # adjust secrets as needed
-docker compose up -d postgres   # start Postgres
+docker compose up -d postgres   # start Postgres on localhost:5432
 npm install
 npx prisma migrate dev          # create schema
 npm run prisma:seed             # optional: admin user + sample menu
-npm run start:dev
+npm run start:dev               # API on localhost:3000
 ```
 
 - API: `http://localhost:3000/api`
@@ -28,11 +28,21 @@ npm run start:dev
 
 Seed creates an admin: `admin@restosync.local` / `Admin123!`.
 
+> **Running alongside `restosync-web`?** The web dev server also defaults to port 3000.
+> Start the web app on a different port: `PORT=3001 pnpm dev` (or `pnpm dev -- --port 3001`).
+
 ## Run everything in Docker
 
 ```bash
 docker compose up --build       # Postgres + API (runs migrations on boot)
 ```
+
+The `docker-compose.yml` defines two services:
+
+| Service    | Image / Build      | Port  | Notes                                         |
+| ---------- | ------------------ | ----- | --------------------------------------------- |
+| `postgres` | `postgres:16-alpine` | 5432 | Data persisted in `restosync-pgdata` volume   |
+| `api`      | built from `Dockerfile` | 3000 | Runs `prisma migrate deploy` on boot      |
 
 ## API docs & client publishing
 
