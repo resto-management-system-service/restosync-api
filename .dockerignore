@@ -5,6 +5,5 @@ coverage
 .env
 .env.*
 *.log
-Dockerfile
 docker-compose.yml
 README.md
