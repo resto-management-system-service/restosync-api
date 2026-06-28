@@ -1,16 +1,16 @@
-name: Deploy
+name: Validate Infra
 
 on:
-  push:
+  pull_request:
     branches: [main]
 
 jobs:
-  deploy:
-    name: Deploy to Fly.io
+  validate:
+    name: Validate Fly config
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: superfly/flyctl-actions/setup-flyctl@master
-      - run: flyctl deploy --config infra/fly.toml --remote-only
+      - run: flyctl config validate --config infra/fly.toml
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
