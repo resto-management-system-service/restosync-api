@@ -54,10 +54,31 @@ jobs:
       - name: Generate OpenAPI spec
         run: npm run openapi:generate
 
+      # Compare the freshly generated spec against the currently published
+      # (last-deployed) one. Only redeploy + notify consumers on a real change.
+      - name: Detect OpenAPI contract changes (oasdiff)
+        id: oasdiff
+        run: |
+          if ! curl -fsS https://restosync-api-docs.iznomag.workers.dev/openapi.json -o base.json; then
+            echo "No published baseline yet — treating as changed."
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if docker run --rm -v "$PWD:/spec" -w /spec tufin/oasdiff \
+              diff base.json site/openapi.json --fail-on-diff >/dev/null 2>&1; then
+            echo "No OpenAPI contract changes."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "OpenAPI contract changed."
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Assemble static site
+        if: steps.oasdiff.outputs.changed == 'true'
         run: cp scripts/swagger-ui.html site/index.html
 
       - name: Deploy to Cloudflare (Worker static assets)
+        if: steps.oasdiff.outputs.changed == 'true'
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -65,3 +86,12 @@ jobs:
           # v4 is required for assets-only Workers (no `main` script).
           wranglerVersion: "4"
           command: deploy
+
+      # Tell the web app to regenerate its typed client (opens a rolling PR there).
+      - name: Notify consumers (restosync-web)
+        if: steps.oasdiff.outputs.changed == 'true' && github.ref == 'refs/heads/main'
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.OPENAPI_SYNC_TOKEN }}
+          repository: resto-management-system-service/restosync-web
+          event-type: update-openapi-client
