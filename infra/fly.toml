@@ -1,0 +1,32 @@
+app            = "restosync-api"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  NODE_ENV               = "production"
+  APP_PORT               = "3000"
+  API_PREFIX             = "api"
+  JWT_EXPIRES_IN         = "15m"
+  JWT_REFRESH_EXPIRES_IN = "7d"
+  STRIPE_CURRENCY        = "usd"
+
+[deploy]
+  release_command = "npx prisma migrate deploy"
+
+[http_service]
+  internal_port      = 3000
+  force_https        = true
+  auto_stop_machines = true
+  auto_start_machines = true
+
+  [[http_service.checks]]
+    interval     = "30s"
+    timeout      = "5s"
+    grace_period = "10s"
+    path         = "/health"
+
+[[vm]]
+  memory = "512mb"
+  cpus   = 1
