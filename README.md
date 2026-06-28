@@ -28,6 +28,37 @@ npm run start:dev
 
 Seed creates an admin: `admin@restosync.local` / `Admin123!`.
 
+## API documentation
+
+Interactive Swagger docs are published to Cloudflare and updated automatically on
+every push to `main`:
+
+**https://restosync-api-docs.iznomag.workers.dev**
+
+The site is a static OpenAPI spec rendered with Swagger UI:
+
+- `/` — Swagger UI
+- `/openapi.json` — raw OpenAPI 3.0 spec
+
+The same docs are served live by the running API at `http://localhost:3000/docs`.
+
+### How it's published
+
+The [`Docs` workflow](.github/workflows/docs.yml) runs on each push to `main`
+(or manually via **Actions → Docs → Run workflow**):
+
+1. `npm run openapi:generate` boots the app and writes `site/openapi.json`
+   (`scripts/generate-openapi.ts`, reusing `src/swagger.config.ts`).
+2. The Swagger UI shell (`scripts/swagger-ui.html`) is copied to `site/index.html`.
+3. `site/` is deployed to a Cloudflare Worker (static assets) via
+   `cloudflare/wrangler-action` (config in `wrangler.jsonc`).
+
+To regenerate the spec locally (needs a reachable Postgres for Prisma):
+
+```bash
+npm run openapi:generate   # writes site/openapi.json
+```
+
 ## Run everything in Docker
 
 ```bash
@@ -78,4 +109,5 @@ stripe trigger payment_intent.succeeded
 | `npm run prisma:migrate`| create/apply a dev migration     |
 | `npm run prisma:studio` | open Prisma Studio               |
 | `npm run prisma:seed`   | seed admin + sample menu         |
+| `npm run openapi:generate` | write OpenAPI spec to `site/openapi.json` |
 | `npm run lint`          | eslint --fix                     |
