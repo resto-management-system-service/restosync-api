@@ -1,9 +1,10 @@
 import { ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
-import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { SwaggerModule } from '@nestjs/swagger';
 import { AppModule } from './app.module';
 import { PrismaExceptionFilter } from './common/filters/prisma-exception.filter';
+import { swaggerConfig } from './swagger.config';
 
 async function bootstrap() {
   // rawBody is required so the Stripe webhook can verify the signature.
@@ -23,12 +24,6 @@ async function bootstrap() {
   );
   app.useGlobalFilters(new PrismaExceptionFilter());
 
-  const swaggerConfig = new DocumentBuilder()
-    .setTitle('RestoSync API')
-    .setDescription('Restaurant management API — menu, orders, payments')
-    .setVersion('0.1.0')
-    .addBearerAuth()
-    .build();
   const document = SwaggerModule.createDocument(app, swaggerConfig);
   SwaggerModule.setup('docs', app, document);
 
