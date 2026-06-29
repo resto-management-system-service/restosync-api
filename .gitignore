@@ -41,3 +41,7 @@ prisma/*.db
 
 # temp
 *.tsbuildinfo
+
+# AGENTS.md
+AGENTS.md
+.codegraph/
