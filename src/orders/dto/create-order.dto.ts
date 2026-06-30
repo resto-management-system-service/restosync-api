@@ -40,10 +40,10 @@ export class CreateOrderDto {
   @IsEnum(OrderType)
   type!: OrderType;
 
-  @ApiPropertyOptional({ description: 'Table number (required for dine-in)' })
-  @ValidateIf((o) => o.type === OrderType.DINE_IN || o.table !== undefined)
+  @ApiPropertyOptional()
+  @ValidateIf((o) => o.type === OrderType.DINE_IN)
   @IsString()
-  @IsNotEmpty()
+  @IsNotEmpty({ message: 'table is required for dine-in orders' })
   table?: string;
 
   @ApiProperty({ type: [OrderLineDto] })
