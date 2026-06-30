@@ -1,14 +1,18 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { OrderType } from '@prisma/client';
 import { Type } from 'class-transformer';
 import {
   ArrayMinSize,
   IsArray,
+  IsEnum,
   IsInt,
+  IsNotEmpty,
   IsObject,
   IsOptional,
   IsString,
   IsUUID,
   Min,
+  ValidateIf,
   ValidateNested,
 } from 'class-validator';
 
@@ -32,6 +36,16 @@ export class OrderLineDto {
 }
 
 export class CreateOrderDto {
+  @ApiProperty({ enum: OrderType, default: OrderType.DINE_IN })
+  @IsEnum(OrderType)
+  type!: OrderType;
+
+  @ApiPropertyOptional({ description: 'Table number (required for dine-in)' })
+  @ValidateIf((o) => o.type === OrderType.DINE_IN || o.table !== undefined)
+  @IsString()
+  @IsNotEmpty()
+  table?: string;
+
   @ApiProperty({ type: [OrderLineDto] })
   @IsArray()
   @ArrayMinSize(1)
