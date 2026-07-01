@@ -26,17 +26,17 @@ const orderInclude = { items: true } satisfies Prisma.OrderInclude;
 
 @Injectable()
 export class OrdersService {
+  private readonly TAX_RATE = 0;
+
   constructor(private readonly prisma: PrismaService) {}
 
   async create(dto: CreateOrderDto, customerId?: string) {
-    // Load all referenced menu items in one query.
     const itemIds = dto.items.map((i) => i.menuItemId);
     const menuItems = await this.prisma.menuItem.findMany({
       where: { id: { in: itemIds } },
     });
     const byId = new Map(menuItems.map((m) => [m.id, m]));
 
-    let subtotalCents = 0;
     const currency = menuItems[0]?.currency ?? 'usd';
 
     const orderItems = dto.items.map((line) => {
@@ -49,9 +49,7 @@ export class OrdersService {
       if (!item.available) {
         throw new BadRequestException(`"${item.name}" is not available`);
       }
-      // Server is the source of truth for price — never trust the client.
       const lineTotalCents = item.priceCents * line.quantity;
-      subtotalCents += lineTotalCents;
       return {
         menuItemId: item.id,
         nameSnapshot: item.name,
@@ -62,29 +60,27 @@ export class OrdersService {
       };
     });
 
-    const taxCents = 0; // Tax strategy is out of scope for v1; wire a rate here later.
-    const totalCents = subtotalCents + taxCents;
-
-    return this.prisma.order.create({
+    const order = await this.prisma.order.create({
       data: {
         number: this.generateOrderNumber(),
         customerId: customerId ?? null,
         type: dto.type,
-        status: OrderStatus.PENDING,
         table: dto.table,
-        subtotalCents,
-        taxCents,
-        totalCents,
+        status: OrderStatus.DRAFT,
+        subtotalCents: 0,
+        taxCents: 0,
+        totalCents: 0,
         currency,
         notes: dto.notes,
         items: { create: orderItems },
       },
       include: orderInclude,
     });
+
+    return this.recalculateTotals(order.id);
   }
 
   async findAll(query: PaginationQueryDto, user: AuthUser) {
-    // Customers only see their own orders; staff/admin see everything.
     const where: Prisma.OrderWhereInput =
       user.role === Role.CUSTOMER ? { customerId: user.id } : {};
 
@@ -132,7 +128,6 @@ export class OrdersService {
     });
   }
 
-  // Used by the payments module once a payment succeeds.
   async markConfirmed(id: string) {
     const order = await this.prisma.order.findUnique({ where: { id } });
     if (!order || !canTransition(order.status, OrderStatus.CONFIRMED)) {
@@ -178,12 +173,7 @@ export class OrdersService {
       },
     });
 
-    await this.recalculateTotals(orderId);
-
-    return this.prisma.order.findUnique({
-      where: { id: orderId },
-      include: orderInclude,
-    });
+    return this.recalculateTotals(orderId);
   }
 
   async updateItemQuantity(
@@ -217,12 +207,7 @@ export class OrdersService {
       data: { quantity: dto.quantity, lineTotalCents },
     });
 
-    await this.recalculateTotals(orderId);
-
-    return this.prisma.order.findUnique({
-      where: { id: orderId },
-      include: orderInclude,
-    });
+    return this.recalculateTotals(orderId);
   }
 
   async removeItem(orderId: string, orderItemId: string) {
@@ -247,12 +232,7 @@ export class OrdersService {
 
     await this.prisma.orderItem.delete({ where: { id: orderItemId } });
 
-    await this.recalculateTotals(orderId);
-
-    return this.prisma.order.findUnique({
-      where: { id: orderId },
-      include: orderInclude,
-    });
+    return this.recalculateTotals(orderId);
   }
 
   async confirmOrder(orderId: string) {
@@ -285,12 +265,13 @@ export class OrdersService {
       (sum, item) => sum + item.priceCents * item.quantity,
       0,
     );
-    const taxCents = 0; // Tax strategy is out of scope for v1; wire a rate here later.
+    const taxCents = Math.round(subtotalCents * this.TAX_RATE);
     const totalCents = subtotalCents + taxCents;
 
-    await this.prisma.order.update({
+    return this.prisma.order.update({
       where: { id: orderId },
       data: { subtotalCents, taxCents, totalCents },
+      include: orderInclude,
     });
   }
 
