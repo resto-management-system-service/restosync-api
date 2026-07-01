@@ -104,6 +104,11 @@ export class OrdersController {
   @ApiTags('orders')
   @Roles(Role.STAFF, Role.ADMIN)
   @Delete(':id/items/:itemId')
+  @ApiOperation({ summary: 'Remove a line from an open order' })
+  @ApiResponse({ status: 200, description: 'Line removed, totals recomputed' })
+  @ApiResponse({ status: 400, description: 'Order not editable' })
+  @ApiResponse({ status: 404, description: 'Order or item not found' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
   removeItem(@Param('id') id: string, @Param('itemId') itemId: string) {
     return this.ordersService.removeItem(id, itemId);
   }
