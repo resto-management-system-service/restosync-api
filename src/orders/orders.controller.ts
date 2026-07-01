@@ -62,6 +62,17 @@ export class OrdersController {
   @ApiTags('orders')
   @Roles(Role.STAFF, Role.ADMIN)
   @Post(':id/items')
+  @ApiOperation({ summary: 'Add a product to an open order' })
+  @ApiResponse({
+    status: 201,
+    description: 'Item added with price snapshot, total recomputed',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Order not editable or validation error',
+  })
+  @ApiResponse({ status: 404, description: 'Order or menu item not found' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
   addItem(@Param('id') id: string, @Body() dto: AddOrderItemDto) {
     return this.ordersService.addItem(id, dto);
   }
