@@ -80,6 +80,7 @@ model MenuItem {
 // ---------- Orders ----------
 
 enum OrderStatus {
+  DRAFT
   PENDING
   CONFIRMED
   PREPARING
