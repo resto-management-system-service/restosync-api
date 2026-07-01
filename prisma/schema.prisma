@@ -79,6 +79,11 @@ model MenuItem {
 
 // ---------- Orders ----------
 
+enum OrderType {
+  DINE_IN
+  TAKEAWAY
+}
+
 enum OrderStatus {
   DRAFT
   PENDING
@@ -94,7 +99,9 @@ model Order {
   number       String      @unique
   customerId   String?
   customer     User?       @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  type         OrderType   @default(DINE_IN)
   status       OrderStatus @default(DRAFT)
+  table        String?
   subtotalCents Int        @default(0)
   taxCents     Int         @default(0)
   totalCents   Int         @default(0)
