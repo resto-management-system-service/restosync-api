@@ -43,6 +43,7 @@ jobs:
       - run: npm ci
       - run: npx prisma generate
       - run: npx prisma migrate deploy
+      - run: npx prisma db seed
       - run: npm run lint
       - run: npm run build
       - run: npm test
