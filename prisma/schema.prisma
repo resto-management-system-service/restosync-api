@@ -80,6 +80,7 @@ model MenuItem {
 // ---------- Orders ----------
 
 enum OrderStatus {
+  DRAFT
   PENDING
   CONFIRMED
   PREPARING
@@ -93,7 +94,7 @@ model Order {
   number       String      @unique
   customerId   String?
   customer     User?       @relation(fields: [customerId], references: [id], onDelete: SetNull)
-  status       OrderStatus @default(PENDING)
+  status       OrderStatus @default(DRAFT)
   subtotalCents Int        @default(0)
   taxCents     Int         @default(0)
   totalCents   Int         @default(0)

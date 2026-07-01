@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   Patch,
@@ -15,7 +16,9 @@ import {
 } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { PaginationQueryDto } from '../common/dto/pagination-query.dto';
+import { AddOrderItemDto } from './dto/add-order-item.dto';
 import { CreateOrderDto } from './dto/create-order.dto';
+import { UpdateOrderItemDto } from './dto/update-order-item.dto';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
 import { OrdersService } from './orders.service';
 
@@ -44,5 +47,41 @@ export class OrdersController {
   @Patch(':id/status')
   updateStatus(@Param('id') id: string, @Body() dto: UpdateOrderStatusDto) {
     return this.ordersService.updateStatus(id, dto.status);
+  }
+
+  @ApiBearerAuth()
+  @ApiTags('orders')
+  @Roles(Role.STAFF, Role.ADMIN)
+  @Post(':id/items')
+  addItem(@Param('id') id: string, @Body() dto: AddOrderItemDto) {
+    return this.ordersService.addItem(id, dto);
+  }
+
+  @ApiBearerAuth()
+  @ApiTags('orders')
+  @Roles(Role.STAFF, Role.ADMIN)
+  @Patch(':id/items/:itemId')
+  updateItemQuantity(
+    @Param('id') id: string,
+    @Param('itemId') itemId: string,
+    @Body() dto: UpdateOrderItemDto,
+  ) {
+    return this.ordersService.updateItemQuantity(id, itemId, dto);
+  }
+
+  @ApiBearerAuth()
+  @ApiTags('orders')
+  @Roles(Role.STAFF, Role.ADMIN)
+  @Delete(':id/items/:itemId')
+  removeItem(@Param('id') id: string, @Param('itemId') itemId: string) {
+    return this.ordersService.removeItem(id, itemId);
+  }
+
+  @ApiBearerAuth()
+  @ApiTags('orders')
+  @Roles(Role.STAFF, Role.ADMIN)
+  @Post(':id/confirm')
+  confirmOrder(@Param('id') id: string) {
+    return this.ordersService.confirmOrder(id);
   }
 }
