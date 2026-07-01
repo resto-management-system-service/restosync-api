@@ -47,6 +47,18 @@ export class OrdersController {
     return this.ordersService.findAll(query, user);
   }
 
+  @Roles(Role.STAFF, Role.ADMIN)
+  @Get('open')
+  @ApiOperation({ summary: 'List open orders with current totals' })
+  @ApiResponse({
+    status: 200,
+    description: 'List of DRAFT/PENDING orders with totals',
+  })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  findOpen() {
+    return this.ordersService.findOpen();
+  }
+
   @Get(':id')
   findOne(@Param('id') id: string, @CurrentUser() user: AuthUser) {
     return this.ordersService.findOne(id, user);

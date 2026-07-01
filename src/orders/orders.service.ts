@@ -111,6 +111,14 @@ export class OrdersService {
     return order;
   }
 
+  async findOpen() {
+    return this.prisma.order.findMany({
+      where: { status: { in: [OrderStatus.DRAFT, OrderStatus.PENDING] } },
+      include: orderInclude,
+      orderBy: { createdAt: 'asc' },
+    });
+  }
+
   async updateStatus(id: string, next: OrderStatus) {
     const order = await this.prisma.order.findUnique({ where: { id } });
     if (!order) {
