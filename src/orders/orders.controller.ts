@@ -117,6 +117,14 @@ export class OrdersController {
   @ApiTags('orders')
   @Roles(Role.STAFF, Role.ADMIN)
   @Post(':id/confirm')
+  @ApiOperation({ summary: 'Close an order and send to checkout' })
+  @ApiResponse({ status: 200, description: 'Order closed, status PENDING' })
+  @ApiResponse({
+    status: 400,
+    description: 'Order has no items or invalid transition',
+  })
+  @ApiResponse({ status: 404, description: 'Order not found' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
   confirmOrder(@Param('id') id: string) {
     return this.ordersService.confirmOrder(id);
   }
