@@ -62,7 +62,9 @@ export class OrdersService {
       data: {
         number: this.generateOrderNumber(),
         customerId: customerId ?? null,
+        type: dto.type,
         status: OrderStatus.PENDING,
+        table: dto.table,
         subtotalCents,
         taxCents,
         totalCents,
