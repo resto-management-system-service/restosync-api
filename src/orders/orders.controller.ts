@@ -81,6 +81,17 @@ export class OrdersController {
   @ApiTags('orders')
   @Roles(Role.STAFF, Role.ADMIN)
   @Patch(':id/items/:itemId')
+  @ApiOperation({ summary: 'Change quantity of an order line' })
+  @ApiResponse({
+    status: 200,
+    description: 'Quantity updated, total recomputed',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Order not editable or validation error',
+  })
+  @ApiResponse({ status: 404, description: 'Order or item not found' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
   updateItemQuantity(
     @Param('id') id: string,
     @Param('itemId') itemId: string,
