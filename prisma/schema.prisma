@@ -11,9 +11,10 @@ datasource db {
 
 enum Role {
   ADMIN
-  STAFF
+  WAITER
   CASHIER
   MANAGER
+  STAFF
   CUSTOMER
 }
 

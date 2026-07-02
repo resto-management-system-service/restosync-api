@@ -34,6 +34,7 @@ export class OrdersController {
   constructor(private readonly ordersService: OrdersService) {}
 
   @Post()
+  @Roles(Role.WAITER, Role.CASHIER, Role.MANAGER, Role.ADMIN)
   @ApiOperation({ summary: 'Open a new order' })
   @ApiResponse({ status: 201, description: 'Order created in DRAFT status' })
   @ApiResponse({ status: 400, description: 'Validation error' })
@@ -43,11 +44,12 @@ export class OrdersController {
   }
 
   @Get()
+  @Roles(Role.CASHIER, Role.MANAGER, Role.ADMIN)
   findAll(@Query() query: PaginationQueryDto, @CurrentUser() user: AuthUser) {
     return this.ordersService.findAll(query, user);
   }
 
-  @Roles(Role.STAFF, Role.ADMIN)
+  @Roles(Role.WAITER, Role.CASHIER, Role.MANAGER, Role.ADMIN)
   @Get('open')
   @ApiOperation({ summary: 'List open orders with current totals' })
   @ApiResponse({
@@ -72,7 +74,7 @@ export class OrdersController {
 
   @ApiBearerAuth()
   @ApiTags('orders')
-  @Roles(Role.STAFF, Role.ADMIN)
+  @Roles(Role.WAITER, Role.CASHIER, Role.MANAGER, Role.ADMIN)
   @Post(':id/items')
   @ApiOperation({ summary: 'Add a product to an open order' })
   @ApiResponse({
@@ -91,7 +93,7 @@ export class OrdersController {
 
   @ApiBearerAuth()
   @ApiTags('orders')
-  @Roles(Role.STAFF, Role.ADMIN)
+  @Roles(Role.WAITER, Role.CASHIER, Role.MANAGER, Role.ADMIN)
   @Patch(':id/items/:itemId')
   @ApiOperation({ summary: 'Change quantity of an order line' })
   @ApiResponse({
@@ -114,7 +116,7 @@ export class OrdersController {
 
   @ApiBearerAuth()
   @ApiTags('orders')
-  @Roles(Role.STAFF, Role.ADMIN)
+  @Roles(Role.WAITER, Role.CASHIER, Role.MANAGER, Role.ADMIN)
   @Delete(':id/items/:itemId')
   @ApiOperation({ summary: 'Remove a line from an open order' })
   @ApiResponse({ status: 200, description: 'Line removed, totals recomputed' })
@@ -127,7 +129,7 @@ export class OrdersController {
 
   @ApiBearerAuth()
   @ApiTags('orders')
-  @Roles(Role.STAFF, Role.ADMIN)
+  @Roles(Role.WAITER, Role.CASHIER, Role.MANAGER, Role.ADMIN)
   @Post(':id/confirm')
   @ApiOperation({ summary: 'Close an order and send to checkout' })
   @ApiResponse({ status: 200, description: 'Order closed, status PENDING' })
