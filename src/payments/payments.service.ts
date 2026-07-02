@@ -5,7 +5,12 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { OrderStatus, PaymentStatus, Prisma } from '@prisma/client';
+import {
+  OrderStatus,
+  PaymentMethod,
+  PaymentStatus,
+  Prisma,
+} from '@prisma/client';
 import { OrdersService } from '../orders/orders.service';
 import { PrismaService } from '../prisma/prisma.service';
 import {
@@ -49,6 +54,7 @@ export class PaymentsService {
       update: { amountCents: order.totalCents },
       create: {
         orderId: order.id,
+        method: PaymentMethod.STRIPE,
         provider: 'stripe',
         providerRef: intent.id,
         amountCents: order.totalCents,
