@@ -36,7 +36,7 @@ export class ReportsController {
   }
 
   @Get('best-selling')
-  @ApiOperation({ summary: 'Best selling products for the day' })
+  @ApiOperation({ summary: 'Best-selling products by quantity and revenue' })
   @ApiResponse({
     status: 200,
     description: 'Top products by quantity sold',
