@@ -23,8 +23,10 @@ model User {
   lastName     String?
   role         Role      @default(CUSTOMER)
   active       Boolean   @default(true)
-  orders       Order[]
-  sessions     Session[]
+  orders           Order[]
+  openedSessions   CashRegisterSession[] @relation("OpenedSessions")
+  closedSessions   CashRegisterSession[] @relation("ClosedSessions")
+  sessions         Session[]
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 
@@ -162,10 +164,34 @@ model Payment {
   currency      String        @default("usd")
   status        PaymentStatus @default(REQUIRES_PAYMENT)
   lastEventId   String? // last processed webhook event id (idempotency)
-  rawEvent      Json?
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
+  sessionId      String?
+  session        CashRegisterSession? @relation(fields: [sessionId], references: [id])
+  rawEvent        Json?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
 
   @@index([orderId])
   @@map("payments")
+}
+
+// ---------- Cash Register ----------
+
+model CashRegisterSession {
+  id                String    @id @default(uuid())
+  openedById        String
+  openedBy          User      @relation("OpenedSessions", fields: [openedById], references: [id])
+  openedAt          DateTime  @default(now())
+  closedById        String?
+  closedBy          User?     @relation("ClosedSessions", fields: [closedById], references: [id])
+  closedAt          DateTime?
+  openingFloatCents Int       @default(0)
+  expectedCents     Int?      // computed from sales at close
+  countedCents      Int?      // physically counted by cashier
+  differenceCents   Int?      // countedCents - expectedCents
+  notes             String?
+  payments          Payment[]
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@map("cash_register_sessions")
 }
