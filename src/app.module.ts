@@ -8,6 +8,7 @@ import { RolesGuard } from './auth/guards/roles.guard';
 import configuration from './config/configuration';
 import { validateEnv } from './config/env.validation';
 import { CashRegisterModule } from './cash-register/cash-register.module';
+import { InventoryModule } from './inventory/inventory.module';
 import { MenuModule } from './menu/menu.module';
 import { OrdersModule } from './orders/orders.module';
 import { PaymentsModule } from './payments/payments.module';
@@ -30,6 +31,7 @@ import { UsersModule } from './users/users.module';
     PaymentsModule,
     CashRegisterModule,
     ReportsModule,
+    InventoryModule,
   ],
   controllers: [AppController],
   providers: [
