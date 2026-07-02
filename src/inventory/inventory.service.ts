@@ -91,7 +91,13 @@ export class InventoryService {
       where: { lowStockThreshold: { gt: 0 } },
       orderBy: { name: 'asc' },
     });
-    return items.filter((i) => i.quantityOnHand <= i.lowStockThreshold);
+    return items
+      .filter((i) => i.quantityOnHand <= i.lowStockThreshold)
+      .map((i) => ({
+        ...i,
+        alertLevel:
+          i.quantityOnHand === 0 ? ('CRITICAL' as const) : ('LOW' as const),
+      }));
   }
 
   private async ensureExists(id: string) {
