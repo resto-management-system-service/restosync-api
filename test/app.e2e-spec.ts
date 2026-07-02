@@ -399,4 +399,261 @@ describe('RestoSync API (e2e)', () => {
       expect(res.body.summary.ticketCount).toBe(1);
     });
   });
+
+  describe('reports accuracy', () => {
+    // Report endpoints aggregate by calendar day, so other describe blocks
+    // in this same suite (and prior test runs against the same DB) also
+    // contribute sales for "today". Rather than asserting brittle absolute
+    // totals, we snapshot the metrics BEFORE creating known fixtures and
+    // assert the DELTA matches exactly what the fixtures should contribute.
+    const PRODUCT_A_PRICE_CENTS = 1200;
+    const PRODUCT_A_QTY = 2;
+    const PRODUCT_A_REVENUE_CENTS = PRODUCT_A_PRICE_CENTS * PRODUCT_A_QTY; // 2400
+    const PRODUCT_B_PRICE_CENTS = 800;
+    const PRODUCT_B_QTY = 1;
+    const PRODUCT_B_REVENUE_CENTS = PRODUCT_B_PRICE_CENTS * PRODUCT_B_QTY; // 800
+    const TOTAL_NEW_SALES_CENTS =
+      PRODUCT_A_REVENUE_CENTS + PRODUCT_B_REVENUE_CENTS; // 3200
+
+    const today = new Date().toISOString().slice(0, 10);
+    const productAName = `ReportProductA_${Date.now()}`;
+    const productBName = `ReportProductB_${Date.now()}`;
+
+    let managerToken: string;
+    let adminToken: string;
+    let cashierToken: string;
+
+    let before: {
+      totalSalesCents: number;
+      ticketCount: number;
+      cashCents: number;
+      cardCents: number;
+      ticketsByDayCount: number;
+    };
+
+    beforeAll(async () => {
+      const managerLogin = await request(app.getHttpServer())
+        .post('/api/auth/login')
+        .send({ email: 'manager@restosync.local', password: 'Manager123!' })
+        .expect(200);
+      managerToken = managerLogin.body.accessToken;
+
+      const adminLogin = await request(app.getHttpServer())
+        .post('/api/auth/login')
+        .send({ email: 'admin@restosync.local', password: 'Admin123!' })
+        .expect(200);
+      adminToken = adminLogin.body.accessToken;
+
+      const cashierLogin = await request(app.getHttpServer())
+        .post('/api/auth/login')
+        .send({ email: 'cashier@restosync.local', password: 'Cashier123!' })
+        .expect(200);
+      cashierToken = cashierLogin.body.accessToken;
+
+      // Snapshot metrics BEFORE adding fixtures.
+      const dailyBefore = await request(app.getHttpServer())
+        .get('/api/reports/daily-summary')
+        .query({ date: today })
+        .set('Authorization', `Bearer ${managerToken}`)
+        .expect(200);
+      const methodsBefore = await request(app.getHttpServer())
+        .get('/api/reports/payment-methods')
+        .query({ date: today })
+        .set('Authorization', `Bearer ${managerToken}`)
+        .expect(200);
+      const ticketsBefore = await request(app.getHttpServer())
+        .get('/api/reports/tickets-by-day')
+        .query({ startDate: today, endDate: today })
+        .set('Authorization', `Bearer ${managerToken}`)
+        .expect(200);
+      const ticketsBeforeEntry = ticketsBefore.body.find(
+        (e: { date: string }) => e.date === today,
+      );
+
+      before = {
+        totalSalesCents: dailyBefore.body.totalSalesCents,
+        ticketCount: dailyBefore.body.ticketCount,
+        cashCents: methodsBefore.body.CASH ?? 0,
+        cardCents: methodsBefore.body.CARD ?? 0,
+        ticketsByDayCount: ticketsBeforeEntry?.ticketCount ?? 0,
+      };
+
+      // Menu fixtures.
+      const category = await request(app.getHttpServer())
+        .post('/api/menu/categories')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ name: `Reports_${Date.now()}` })
+        .expect(201);
+      const categoryId = category.body.id;
+
+      const productA = await request(app.getHttpServer())
+        .post('/api/menu/items')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          name: productAName,
+          priceCents: PRODUCT_A_PRICE_CENTS,
+          categoryId,
+        })
+        .expect(201);
+      const productAId = productA.body.id;
+
+      const productB = await request(app.getHttpServer())
+        .post('/api/menu/items')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          name: productBName,
+          priceCents: PRODUCT_B_PRICE_CENTS,
+          categoryId,
+        })
+        .expect(201);
+      const productBId = productB.body.id;
+
+      // Clean up any register session left open by a previous test run.
+      await request(app.getHttpServer())
+        .post('/api/cash-register/close')
+        .set('Authorization', `Bearer ${cashierToken}`)
+        .send({ countedCents: 0 });
+
+      await request(app.getHttpServer())
+        .post('/api/cash-register/open')
+        .set('Authorization', `Bearer ${cashierToken}`)
+        .send({ openingFloatCents: 0 })
+        .expect(201);
+
+      // Order A: 2x productA, paid CASH.
+      const orderA = await request(app.getHttpServer())
+        .post('/api/orders')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          type: 'DINE_IN',
+          table: 'R1',
+          items: [{ menuItemId: productAId, quantity: PRODUCT_A_QTY }],
+        })
+        .expect(201);
+      expect(orderA.body.totalCents).toBe(PRODUCT_A_REVENUE_CENTS);
+
+      await request(app.getHttpServer())
+        .post(`/api/orders/${orderA.body.id}/confirm`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(201);
+
+      const paymentA = await request(app.getHttpServer())
+        .post('/api/payments/checkout')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          orderId: orderA.body.id,
+          method: 'CASH',
+          amountPaidCents: PRODUCT_A_REVENUE_CENTS,
+        })
+        .expect(201);
+      expect(paymentA.body.status).toBe('SUCCEEDED');
+      expect(paymentA.body.amountCents).toBe(PRODUCT_A_REVENUE_CENTS);
+
+      // Order B: 1x productB, paid CARD.
+      const orderB = await request(app.getHttpServer())
+        .post('/api/orders')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          type: 'DINE_IN',
+          table: 'R2',
+          items: [{ menuItemId: productBId, quantity: PRODUCT_B_QTY }],
+        })
+        .expect(201);
+      expect(orderB.body.totalCents).toBe(PRODUCT_B_REVENUE_CENTS);
+
+      await request(app.getHttpServer())
+        .post(`/api/orders/${orderB.body.id}/confirm`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(201);
+
+      const paymentB = await request(app.getHttpServer())
+        .post('/api/payments/checkout')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          orderId: orderB.body.id,
+          method: 'CARD',
+          amountPaidCents: PRODUCT_B_REVENUE_CENTS,
+        })
+        .expect(201);
+      expect(paymentB.body.status).toBe('SUCCEEDED');
+      expect(paymentB.body.amountCents).toBe(PRODUCT_B_REVENUE_CENTS);
+
+      // Close the register to leave a clean state for subsequent runs.
+      await request(app.getHttpServer())
+        .post('/api/cash-register/close')
+        .set('Authorization', `Bearer ${cashierToken}`)
+        .send({ countedCents: PRODUCT_A_REVENUE_CENTS })
+        .expect(200);
+    });
+
+    it('GET /api/reports/daily-summary reflects the new fixtures', async () => {
+      const res = await request(app.getHttpServer())
+        .get('/api/reports/daily-summary')
+        .query({ date: today })
+        .set('Authorization', `Bearer ${managerToken}`)
+        .expect(200);
+
+      expect(res.body.totalSalesCents - before.totalSalesCents).toBe(
+        TOTAL_NEW_SALES_CENTS,
+      );
+      expect(res.body.ticketCount - before.ticketCount).toBe(2);
+      expect(res.body.averageTicketCents).toBe(
+        Math.round(res.body.totalSalesCents / res.body.ticketCount),
+      );
+    });
+
+    it('GET /api/reports/payment-methods reflects CASH and CARD amounts', async () => {
+      const res = await request(app.getHttpServer())
+        .get('/api/reports/payment-methods')
+        .query({ date: today })
+        .set('Authorization', `Bearer ${managerToken}`)
+        .expect(200);
+
+      expect(res.body.CASH - before.cashCents).toBe(PRODUCT_A_REVENUE_CENTS);
+      expect(res.body.CARD - before.cardCents).toBe(PRODUCT_B_REVENUE_CENTS);
+    });
+
+    it('GET /api/reports/best-selling ranks productA above productB', async () => {
+      const res = await request(app.getHttpServer())
+        .get('/api/reports/best-selling')
+        .query({ date: today, limit: 50 })
+        .set('Authorization', `Bearer ${managerToken}`)
+        .expect(200);
+
+      const entryA = res.body.find(
+        (p: { name: string }) => p.name === productAName,
+      );
+      const entryB = res.body.find(
+        (p: { name: string }) => p.name === productBName,
+      );
+
+      expect(entryA).toBeDefined();
+      expect(entryB).toBeDefined();
+      expect(entryA.quantitySold).toBe(PRODUCT_A_QTY);
+      expect(entryA.revenueCents).toBe(PRODUCT_A_REVENUE_CENTS);
+      expect(entryB.quantitySold).toBe(PRODUCT_B_QTY);
+      expect(entryB.revenueCents).toBe(PRODUCT_B_REVENUE_CENTS);
+      expect(res.body.indexOf(entryA)).toBeLessThan(res.body.indexOf(entryB));
+    });
+
+    it('GET /api/reports/tickets-by-day reflects the 2 new tickets', async () => {
+      const res = await request(app.getHttpServer())
+        .get('/api/reports/tickets-by-day')
+        .query({ startDate: today, endDate: today })
+        .set('Authorization', `Bearer ${managerToken}`)
+        .expect(200);
+
+      const entry = res.body.find((e: { date: string }) => e.date === today);
+      expect(entry).toBeDefined();
+      expect(entry.ticketCount - before.ticketsByDayCount).toBe(2);
+    });
+
+    it('rejects report access for roles other than MANAGER/ADMIN', async () => {
+      await request(app.getHttpServer())
+        .get('/api/reports/daily-summary')
+        .query({ date: today })
+        .set('Authorization', `Bearer ${cashierToken}`)
+        .expect(403);
+    });
+  });
 });
