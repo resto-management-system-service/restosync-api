@@ -1,4 +1,4 @@
-import { PrismaClient, Role } from '@prisma/client';
+import { OrderStatus, OrderType, PrismaClient, Role } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 
 const prisma = new PrismaClient();
@@ -88,6 +88,125 @@ async function main() {
   console.log(`Seeded cashier user: ${cashier.email} (password: Cashier123!)`);
   console.log(`Seeded waiter user: ${waiter.email} (password: Waiter123!)`);
   console.log(`Seeded manager user: ${manager.email} (password: Manager123!)`);
+
+  // ─── Demo categories ──────────────────────────────────────────
+
+  const categories = [
+    { id: '33333333-3333-4333-8333-333333333301', name: 'Entradas', sortOrder: 2 },
+    { id: '33333333-3333-4333-8333-333333333302', name: 'Platos de Fondo', sortOrder: 3 },
+    { id: '33333333-3333-4333-8333-333333333303', name: 'Bebidas', sortOrder: 4 },
+    { id: '33333333-3333-4333-8333-333333333304', name: 'Postres', sortOrder: 5 },
+  ];
+
+  for (const cat of categories) {
+    await prisma.category.upsert({
+      where: { id: cat.id },
+      update: { name: cat.name, sortOrder: cat.sortOrder },
+      create: cat,
+    });
+  }
+
+  // ─── Demo menu items ───────────────────────────────────────────
+
+  const menuItems = [
+    { id: '44444444-4444-4444-8444-444444444401', name: 'Ceviche Clásico', priceCents: 1800, categoryId: categories[0].id },
+    { id: '44444444-4444-4444-8444-444444444402', name: 'Causa Limeña', priceCents: 1200, categoryId: categories[0].id },
+    { id: '44444444-4444-4444-8444-444444444403', name: 'Tequeños', priceCents: 900, categoryId: categories[0].id },
+
+    { id: '44444444-4444-4444-8444-444444444404', name: 'Lomo Saltado', priceCents: 2500, categoryId: categories[1].id },
+    { id: '44444444-4444-4444-8444-444444444405', name: 'Ají de Gallina', priceCents: 2200, categoryId: categories[1].id },
+    { id: '44444444-4444-4444-8444-444444444406', name: 'Arroz con Leche', priceCents: 1500, categoryId: categories[1].id },
+
+    { id: '44444444-4444-4444-8444-444444444407', name: 'Chicha Morada', priceCents: 600, categoryId: categories[2].id },
+    { id: '44444444-4444-4444-8444-444444444408', name: 'Inca Kola', priceCents: 400, categoryId: categories[2].id },
+    { id: '44444444-4444-4444-8444-444444444409', name: 'Agua Mineral', priceCents: 300, categoryId: categories[2].id },
+
+    { id: '44444444-4444-4444-8444-444444444410', name: 'Mazamorra Morada', priceCents: 800, categoryId: categories[3].id },
+    { id: '44444444-4444-4444-8444-444444444411', name: 'Suspiro Limeño', priceCents: 900, categoryId: categories[3].id },
+    { id: '44444444-4444-4444-8444-444444444412', name: 'Picarones', priceCents: 700, categoryId: categories[3].id },
+  ];
+
+  for (const item of menuItems) {
+    await prisma.menuItem.upsert({
+      where: { id: item.id },
+      update: { name: item.name, priceCents: item.priceCents, categoryId: item.categoryId },
+      create: item,
+    });
+  }
+
+  // ─── Demo orders ───────────────────────────────────────────────
+
+  const menuLookup = new Map(menuItems.map((m) => [m.name, m]));
+
+  const demoOrders = [
+    {
+      number: 'DEMO-001',
+      type: OrderType.DINE_IN,
+      status: OrderStatus.DRAFT,
+      table: 'Mesa 1',
+      items: [
+        { name: 'Ceviche Clásico', quantity: 2 },
+        { name: 'Chicha Morada', quantity: 1 },
+      ],
+    },
+    {
+      number: 'DEMO-002',
+      type: OrderType.TAKEAWAY,
+      status: OrderStatus.DRAFT,
+      table: null as string | null,
+      items: [
+        { name: 'Lomo Saltado', quantity: 1 },
+        { name: 'Inca Kola', quantity: 2 },
+      ],
+    },
+  ];
+
+  for (const demo of demoOrders) {
+    const existing = await prisma.order.findUnique({ where: { number: demo.number } });
+
+    if (existing) {
+      await prisma.orderItem.deleteMany({ where: { orderId: existing.id } });
+    }
+
+    const order = await prisma.order.upsert({
+      where: { number: demo.number },
+      update: { type: demo.type, status: demo.status, table: demo.table },
+      create: {
+        number: demo.number,
+        type: demo.type,
+        status: demo.status,
+        table: demo.table,
+        customerId: admin.id,
+      },
+    });
+
+    const itemRows = demo.items.map((di) => {
+      const menuItem = menuLookup.get(di.name)!;
+      return {
+        orderId: order.id,
+        menuItemId: menuItem.id,
+        nameSnapshot: menuItem.name,
+        priceCents: menuItem.priceCents,
+        quantity: di.quantity,
+        lineTotalCents: menuItem.priceCents * di.quantity,
+      };
+    });
+
+    await prisma.orderItem.createMany({ data: itemRows });
+
+    const subtotalCents = itemRows.reduce((sum, i) => sum + i.lineTotalCents, 0);
+    const taxCents = 0;
+    const totalCents = subtotalCents + taxCents;
+
+    await prisma.order.update({
+      where: { id: order.id },
+      data: { subtotalCents, taxCents, totalCents },
+    });
+
+    console.log(`Seeded order: ${order.number} (${order.type}, ${order.status}) — total: ${totalCents} cents`);
+  }
+
+  console.log('Demo seed complete.');
 }
 
 main()
