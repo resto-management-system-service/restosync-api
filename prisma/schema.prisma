@@ -28,6 +28,7 @@ model User {
   orders           Order[]
   openedSessions   CashRegisterSession[] @relation("OpenedSessions")
   closedSessions   CashRegisterSession[] @relation("ClosedSessions")
+  stockAdjustments StockAdjustment[]
   sessions         Session[]
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
@@ -74,6 +75,7 @@ model MenuItem {
   categoryId  String
   category    Category    @relation(fields: [categoryId], references: [id], onDelete: Restrict)
   orderItems  OrderItem[]
+  inventoryItem  InventoryItem?
   createdAt   DateTime    @default(now())
   updatedAt   DateTime    @updatedAt
 
@@ -198,4 +200,43 @@ model CashRegisterSession {
   updatedAt         DateTime  @updatedAt
 
   @@map("cash_register_sessions")
+}
+
+// ---------- Inventory ----------
+
+enum AdjustmentType {
+  RESTOCK
+  SALE
+  WASTE
+  CORRECTION
+}
+
+model InventoryItem {
+  id                String            @id @default(uuid())
+  name              String
+  unit              String            @default("unit")
+  quantityOnHand    Float             @default(0)
+  lowStockThreshold Float             @default(0)
+  menuItemId        String?           @unique
+  menuItem          MenuItem?         @relation(fields: [menuItemId], references: [id], onDelete: SetNull)
+  adjustments       StockAdjustment[]
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  @@map("inventory_items")
+}
+
+model StockAdjustment {
+  id              String         @id @default(uuid())
+  inventoryItemId String
+  inventoryItem   InventoryItem  @relation(fields: [inventoryItemId], references: [id], onDelete: Cascade)
+  type            AdjustmentType
+  quantityDelta   Float
+  reason          String?
+  performedById   String
+  performedBy     User           @relation(fields: [performedById], references: [id])
+  createdAt       DateTime       @default(now())
+
+  @@index([inventoryItemId])
+  @@map("stock_adjustments")
 }
