@@ -210,4 +210,193 @@ describe('RestoSync API (e2e)', () => {
         .expect(400);
     });
   });
+
+  describe('cashier flow: cash register + checkout', () => {
+    const ORDER_TOTAL_CENTS = 1200;
+    const OPENING_FLOAT_CENTS = 10000;
+
+    let cashierToken: string;
+    let adminToken: string;
+    let categoryId: string;
+    let burgerId: string;
+    let orderId: string;
+    let sessionId: string;
+
+    beforeAll(async () => {
+      const cashierLogin = await request(app.getHttpServer())
+        .post('/api/auth/login')
+        .send({ email: 'cashier@restosync.local', password: 'Cashier123!' })
+        .expect(200);
+      cashierToken = cashierLogin.body.accessToken;
+
+      const adminLogin = await request(app.getHttpServer())
+        .post('/api/auth/login')
+        .send({ email: 'admin@restosync.local', password: 'Admin123!' })
+        .expect(200);
+      adminToken = adminLogin.body.accessToken;
+
+      // Clean up any register session left open by a previous test run.
+      await request(app.getHttpServer())
+        .post('/api/cash-register/close')
+        .set('Authorization', `Bearer ${cashierToken}`)
+        .send({ countedCents: 0 });
+
+      const category = await request(app.getHttpServer())
+        .post('/api/menu/categories')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ name: `Cashier_${Date.now()}` })
+        .expect(201);
+      categoryId = category.body.id;
+
+      const burger = await request(app.getHttpServer())
+        .post('/api/menu/items')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          name: 'Cashier Burger',
+          priceCents: ORDER_TOTAL_CENTS,
+          categoryId,
+        })
+        .expect(201);
+      burgerId = burger.body.id;
+    });
+
+    it('POST /api/cash-register/open opens a session with the float', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/api/cash-register/open')
+        .set('Authorization', `Bearer ${cashierToken}`)
+        .send({ openingFloatCents: OPENING_FLOAT_CENTS })
+        .expect(201);
+
+      expect(res.body.openingFloatCents).toBe(OPENING_FLOAT_CENTS);
+      expect(res.body.closedAt).toBeNull();
+      sessionId = res.body.id;
+    });
+
+    it('rejects opening a second session while one is already open', async () => {
+      await request(app.getHttpServer())
+        .post('/api/cash-register/open')
+        .set('Authorization', `Bearer ${cashierToken}`)
+        .send({ openingFloatCents: 5000 })
+        .expect(400);
+    });
+
+    it('creates and confirms an order for checkout', async () => {
+      const order = await request(app.getHttpServer())
+        .post('/api/orders')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          type: 'DINE_IN',
+          table: 'C1',
+          items: [{ menuItemId: burgerId, quantity: 1 }],
+        })
+        .expect(201);
+      orderId = order.body.id;
+      expect(order.body.totalCents).toBe(ORDER_TOTAL_CENTS);
+
+      const confirmed = await request(app.getHttpServer())
+        .post(`/api/orders/${orderId}/confirm`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(201);
+      expect(confirmed.body.status).toBe('PENDING');
+    });
+
+    it('rejects checkout with insufficient CASH amount', async () => {
+      await request(app.getHttpServer())
+        .post('/api/payments/checkout')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          orderId,
+          method: 'CASH',
+          amountPaidCents: ORDER_TOTAL_CENTS - 100,
+        })
+        .expect(400);
+    });
+
+    it('POST /api/payments/checkout with CASH records the payment and change', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/api/payments/checkout')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          orderId,
+          method: 'CASH',
+          amountPaidCents: ORDER_TOTAL_CENTS + 300,
+        })
+        .expect(201);
+
+      expect(res.body.method).toBe('CASH');
+      expect(res.body.status).toBe('SUCCEEDED');
+      expect(res.body.amountCents).toBe(ORDER_TOTAL_CENTS);
+      expect(res.body.paidCents).toBe(ORDER_TOTAL_CENTS + 300);
+      expect(res.body.changeCents).toBe(300);
+      expect(res.body.order.status).toBe('CONFIRMED');
+      expect(res.body.id).toBeDefined();
+    });
+
+    // NOTE: checkout() validates `order.status === PENDING` before checking
+    // for an existing SUCCEEDED payment. Since the first checkout already
+    // moved the order to CONFIRMED, a second sequential call is rejected by
+    // that guard rather than returning the idempotent payment. True
+    // idempotency only protects concurrent double-submits that race before
+    // the order status update commits, not sequential retries against an
+    // already-confirmed order. This documents the current (unchanged)
+    // service behavior — flagged as a follow-up, not fixed here per the
+    // "do not modify service files" constraint of this test-only issue.
+    it('rejects a second sequential checkout of the same (now CONFIRMED) order', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/api/payments/checkout')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          orderId,
+          method: 'CASH',
+          amountPaidCents: ORDER_TOTAL_CENTS + 300,
+        })
+        .expect(400);
+
+      expect(res.body.message).toMatch(/cannot be checked out/i);
+    });
+
+    it('GET /api/cash-register/current/summary reflects the sale', async () => {
+      const res = await request(app.getHttpServer())
+        .get('/api/cash-register/current/summary')
+        .set('Authorization', `Bearer ${cashierToken}`)
+        .expect(200);
+
+      expect(res.body.summary.totalSalesCents).toBe(ORDER_TOTAL_CENTS);
+      expect(res.body.summary.ticketCount).toBe(1);
+      expect(res.body.summary.byMethod.CASH).toBe(ORDER_TOTAL_CENTS);
+      expect(res.body.summary.byMethod.CARD).toBeUndefined();
+    });
+
+    it('POST /api/cash-register/close reconciles counted vs expected', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/api/cash-register/close')
+        .set('Authorization', `Bearer ${cashierToken}`)
+        .send({ countedCents: ORDER_TOTAL_CENTS })
+        .expect(200);
+
+      expect(res.body.expectedCents).toBe(ORDER_TOTAL_CENTS);
+      expect(res.body.countedCents).toBe(ORDER_TOTAL_CENTS);
+      expect(res.body.differenceCents).toBe(0);
+      expect(res.body.closedAt).not.toBeNull();
+    });
+
+    it('rejects closing when no active session exists', async () => {
+      await request(app.getHttpServer())
+        .post('/api/cash-register/close')
+        .set('Authorization', `Bearer ${cashierToken}`)
+        .send({ countedCents: 0 })
+        .expect(400);
+    });
+
+    it('GET /api/cash-register/sessions/:id/summary returns the closed session summary', async () => {
+      const res = await request(app.getHttpServer())
+        .get(`/api/cash-register/sessions/${sessionId}/summary`)
+        .set('Authorization', `Bearer ${cashierToken}`)
+        .expect(200);
+
+      expect(res.body.session.id).toBe(sessionId);
+      expect(res.body.summary.totalSalesCents).toBe(ORDER_TOTAL_CENTS);
+      expect(res.body.summary.ticketCount).toBe(1);
+    });
+  });
 });
