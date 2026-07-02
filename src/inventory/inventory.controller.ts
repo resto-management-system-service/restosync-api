@@ -35,7 +35,10 @@ export class InventoryController {
   }
 
   @Get('low-stock')
-  @ApiOperation({ summary: 'List items at or below their low-stock threshold' })
+  @ApiOperation({
+    summary:
+      'Low-stock alert mechanism — items at or below threshold with urgency level',
+  })
   @ApiResponse({
     status: 200,
     description: 'Items where quantityOnHand <= lowStockThreshold',
