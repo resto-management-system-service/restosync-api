@@ -656,4 +656,176 @@ describe('RestoSync API (e2e)', () => {
         .expect(403);
     });
   });
+
+  describe('inventory: adjustments + thresholds', () => {
+    let managerToken: string;
+    let cashierToken: string;
+    let itemId: string;
+    const itemName = `Tomato_${Date.now()}`;
+
+    beforeAll(async () => {
+      const managerLogin = await request(app.getHttpServer())
+        .post('/api/auth/login')
+        .send({ email: 'manager@restosync.local', password: 'Manager123!' })
+        .expect(200);
+      managerToken = managerLogin.body.accessToken;
+
+      const cashierLogin = await request(app.getHttpServer())
+        .post('/api/auth/login')
+        .send({ email: 'cashier@restosync.local', password: 'Cashier123!' })
+        .expect(200);
+      cashierToken = cashierLogin.body.accessToken;
+    });
+
+    it('POST /api/inventory creates an item', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/api/inventory')
+        .set('Authorization', `Bearer ${managerToken}`)
+        .send({
+          name: itemName,
+          unit: 'kg',
+          quantityOnHand: 10,
+          lowStockThreshold: 3,
+        })
+        .expect(201);
+
+      expect(res.body.name).toBe(itemName);
+      expect(res.body.unit).toBe('kg');
+      expect(res.body.quantityOnHand).toBe(10);
+      expect(res.body.lowStockThreshold).toBe(3);
+      itemId = res.body.id;
+    });
+
+    it('GET /api/inventory/:id verifies the created item', async () => {
+      const res = await request(app.getHttpServer())
+        .get(`/api/inventory/${itemId}`)
+        .set('Authorization', `Bearer ${managerToken}`)
+        .expect(200);
+
+      expect(res.body.id).toBe(itemId);
+      expect(res.body.quantityOnHand).toBe(10);
+    });
+
+    it('POST /api/inventory/:id/adjust RESTOCK increases quantityOnHand', async () => {
+      const res = await request(app.getHttpServer())
+        .post(`/api/inventory/${itemId}/adjust`)
+        .set('Authorization', `Bearer ${managerToken}`)
+        .send({ type: 'RESTOCK', quantityDelta: 5, reason: 'Delivery' })
+        .expect(201);
+
+      expect(res.body.quantityOnHand).toBe(15);
+    });
+
+    it('POST /api/inventory/:id/adjust WASTE decreases quantityOnHand', async () => {
+      const res = await request(app.getHttpServer())
+        .post(`/api/inventory/${itemId}/adjust`)
+        .set('Authorization', `Bearer ${managerToken}`)
+        .send({ type: 'WASTE', quantityDelta: -13, reason: 'Spoiled' })
+        .expect(201);
+
+      expect(res.body.quantityOnHand).toBe(2);
+    });
+
+    it('GET /api/inventory/low-stock shows the item with alertLevel LOW', async () => {
+      const res = await request(app.getHttpServer())
+        .get('/api/inventory/low-stock')
+        .set('Authorization', `Bearer ${managerToken}`)
+        .expect(200);
+
+      const entry = res.body.find((i: { id: string }) => i.id === itemId);
+      expect(entry).toBeDefined();
+      expect(entry.quantityOnHand).toBe(2);
+      expect(entry.alertLevel).toBe('LOW');
+    });
+
+    it('POST /api/inventory/:id/adjust WASTE clamps quantityOnHand at 0', async () => {
+      const res = await request(app.getHttpServer())
+        .post(`/api/inventory/${itemId}/adjust`)
+        .set('Authorization', `Bearer ${managerToken}`)
+        .send({ type: 'WASTE', quantityDelta: -2, reason: 'Spoiled' })
+        .expect(201);
+
+      expect(res.body.quantityOnHand).toBe(0);
+    });
+
+    it('GET /api/inventory/low-stock shows the item with alertLevel CRITICAL', async () => {
+      const res = await request(app.getHttpServer())
+        .get('/api/inventory/low-stock')
+        .set('Authorization', `Bearer ${managerToken}`)
+        .expect(200);
+
+      const entry = res.body.find((i: { id: string }) => i.id === itemId);
+      expect(entry).toBeDefined();
+      expect(entry.quantityOnHand).toBe(0);
+      expect(entry.alertLevel).toBe('CRITICAL');
+    });
+
+    it('POST /api/inventory/:id/adjust WASTE stays clamped at 0 (never negative)', async () => {
+      const res = await request(app.getHttpServer())
+        .post(`/api/inventory/${itemId}/adjust`)
+        .set('Authorization', `Bearer ${managerToken}`)
+        .send({ type: 'WASTE', quantityDelta: -99, reason: 'Overcorrection' })
+        .expect(201);
+
+      expect(res.body.quantityOnHand).toBe(0);
+    });
+
+    it('POST /api/inventory/:id/adjust on a non-existent item returns 404', async () => {
+      await request(app.getHttpServer())
+        .post('/api/inventory/00000000-0000-4000-8000-000000000000/adjust')
+        .set('Authorization', `Bearer ${managerToken}`)
+        .send({ type: 'RESTOCK', quantityDelta: 1 })
+        .expect(404);
+    });
+
+    it('GET /api/inventory rejects non-MANAGER/ADMIN roles', async () => {
+      await request(app.getHttpServer())
+        .get('/api/inventory')
+        .set('Authorization', `Bearer ${cashierToken}`)
+        .expect(403);
+    });
+
+    it('DELETE /api/inventory/:id removes the item', async () => {
+      await request(app.getHttpServer())
+        .delete(`/api/inventory/${itemId}`)
+        .set('Authorization', `Bearer ${managerToken}`)
+        .expect(200);
+    });
+
+    it('GET /api/inventory/:id returns 404 after deletion', async () => {
+      await request(app.getHttpServer())
+        .get(`/api/inventory/${itemId}`)
+        .set('Authorization', `Bearer ${managerToken}`)
+        .expect(404);
+    });
+
+    it('GET /api/inventory/low-stock returns an empty array when no items qualify', async () => {
+      // The only low-stock item created in this suite (itemId) was deleted
+      // in the previous test, so the endpoint should report no alerts.
+      // A well-stocked item (quantity far above threshold) is also created
+      // here to confirm it never surfaces as a false positive.
+      const wellStocked = await request(app.getHttpServer())
+        .post('/api/inventory')
+        .set('Authorization', `Bearer ${managerToken}`)
+        .send({
+          name: `WellStocked_${Date.now()}`,
+          quantityOnHand: 100,
+          lowStockThreshold: 3,
+        })
+        .expect(201);
+
+      const res = await request(app.getHttpServer())
+        .get('/api/inventory/low-stock')
+        .set('Authorization', `Bearer ${managerToken}`)
+        .expect(200);
+
+      expect(res.body).toEqual([]);
+
+      // Cleanup.
+      await request(app.getHttpServer())
+        .delete(`/api/inventory/${wellStocked.body.id}`)
+        .set('Authorization', `Bearer ${managerToken}`)
+        .expect(200);
+    });
+  });
 });
