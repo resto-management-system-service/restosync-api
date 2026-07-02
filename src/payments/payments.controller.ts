@@ -41,15 +41,14 @@ export class PaymentsController {
   @Roles(Role.STAFF, Role.ADMIN)
   @Post('checkout')
   @HttpCode(HttpStatus.CREATED)
-  @ApiOperation({ summary: 'Checkout: close order and record payment' })
+  @ApiOperation({ summary: 'Record payment method on checkout' })
   @ApiResponse({
     status: 201,
-    description: 'Payment recorded, order confirmed',
+    description: 'Payment recorded with method, amount and order link',
   })
   @ApiResponse({
     status: 400,
-    description:
-      'Order not pending, no active session, or insufficient payment',
+    description: 'Validation error or insufficient payment',
   })
   @ApiResponse({ status: 404, description: 'Order not found' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
