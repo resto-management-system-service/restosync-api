@@ -1,8 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { OrderStatus, PaymentMethod, PaymentStatus } from '@prisma/client';
+import { dayRangeInTimezone, DEFAULT_TIMEZONE } from '../common/utils/timezone';
 import { PrismaService } from '../prisma/prisma.service';
 
-// Orders in either of these statuses count as completed sales.
 const SALE_STATUSES: OrderStatus[] = [
   OrderStatus.COMPLETED,
   OrderStatus.CONFIRMED,
@@ -12,18 +12,19 @@ const SALE_STATUSES: OrderStatus[] = [
 export class ReportsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async getDailySummary(date: string, restaurantId?: string) {
-    // NOTE: the schema is currently single-tenant — Order has no
-    // restaurantId column. This param is accepted for forward-compatibility
-    // with future multi-tenant support but is not yet filterable.
+  async getDailySummary(
+    date: string,
+    restaurantId?: string,
+    timezone?: string,
+  ) {
     void restaurantId;
 
-    const { start, end } = this.dayRange(date);
+    const { gte, lt } = this.dayRange(date, timezone);
 
     const result = await this.prisma.order.aggregate({
       where: {
         status: { in: SALE_STATUSES },
-        createdAt: { gte: start, lt: end },
+        createdAt: { gte, lt },
       },
       _sum: { totalCents: true },
       _count: true,
@@ -37,14 +38,14 @@ export class ReportsService {
     return { totalSalesCents, ticketCount, averageTicketCents };
   }
 
-  async getPaymentMethodBreakdown(date: string) {
-    const { start, end } = this.dayRange(date);
+  async getPaymentMethodBreakdown(date: string, timezone?: string) {
+    const { gte, lt } = this.dayRange(date, timezone);
 
     const grouped = await this.prisma.payment.groupBy({
       by: ['method'],
       where: {
         status: PaymentStatus.SUCCEEDED,
-        createdAt: { gte: start, lt: end },
+        createdAt: { gte, lt },
       },
       _sum: { amountCents: true },
     });
@@ -61,15 +62,15 @@ export class ReportsService {
     return byMethod;
   }
 
-  async getBestSellingProducts(date: string, limit = 10) {
-    const { start, end } = this.dayRange(date);
+  async getBestSellingProducts(date: string, limit = 10, timezone?: string) {
+    const { gte, lt } = this.dayRange(date, timezone);
 
     const grouped = await this.prisma.orderItem.groupBy({
       by: ['menuItemId', 'nameSnapshot'],
       where: {
         order: {
           status: { in: SALE_STATUSES },
-          createdAt: { gte: start, lt: end },
+          createdAt: { gte, lt },
         },
       },
       _sum: { quantity: true, lineTotalCents: true },
@@ -85,14 +86,18 @@ export class ReportsService {
     }));
   }
 
-  async getClosedTickets(startDate: string, endDate: string) {
-    const { start } = this.dayRange(startDate);
-    const { end } = this.dayRange(endDate);
+  async getClosedTickets(
+    startDate: string,
+    endDate: string,
+    timezone?: string,
+  ) {
+    const { gte } = this.dayRange(startDate, timezone);
+    const { lt } = this.dayRange(endDate, timezone);
 
     const orders = await this.prisma.order.findMany({
       where: {
         status: { in: SALE_STATUSES },
-        createdAt: { gte: start, lt: end },
+        createdAt: { gte, lt },
       },
       select: {
         id: true,
@@ -115,14 +120,18 @@ export class ReportsService {
     }));
   }
 
-  async getDailySummaryRange(startDate: string, endDate: string) {
-    const { start } = this.dayRange(startDate);
-    const { end } = this.dayRange(endDate);
+  async getDailySummaryRange(
+    startDate: string,
+    endDate: string,
+    timezone?: string,
+  ) {
+    const { gte } = this.dayRange(startDate, timezone);
+    const { lt } = this.dayRange(endDate, timezone);
 
     const orders = await this.prisma.order.findMany({
       where: {
         status: { in: SALE_STATUSES },
-        createdAt: { gte: start, lt: end },
+        createdAt: { gte, lt },
       },
       select: { createdAt: true, totalCents: true },
     });
@@ -157,15 +166,19 @@ export class ReportsService {
     return result;
   }
 
-  async getPaymentMethodBreakdownRange(startDate: string, endDate: string) {
-    const { start } = this.dayRange(startDate);
-    const { end } = this.dayRange(endDate);
+  async getPaymentMethodBreakdownRange(
+    startDate: string,
+    endDate: string,
+    timezone?: string,
+  ) {
+    const { gte } = this.dayRange(startDate, timezone);
+    const { lt } = this.dayRange(endDate, timezone);
 
     const grouped = await this.prisma.payment.groupBy({
       by: ['method'],
       where: {
         status: PaymentStatus.SUCCEEDED,
-        createdAt: { gte: start, lt: end },
+        createdAt: { gte, lt },
       },
       _sum: { amountCents: true },
     });
@@ -182,14 +195,18 @@ export class ReportsService {
     return byMethod;
   }
 
-  async getTicketCountByDay(startDate: string, endDate: string) {
-    const { start } = this.dayRange(startDate);
-    const { end } = this.dayRange(endDate);
+  async getTicketCountByDay(
+    startDate: string,
+    endDate: string,
+    timezone?: string,
+  ) {
+    const { gte } = this.dayRange(startDate, timezone);
+    const { lt } = this.dayRange(endDate, timezone);
 
     const orders = await this.prisma.order.findMany({
       where: {
         status: { in: SALE_STATUSES },
-        createdAt: { gte: start, lt: end },
+        createdAt: { gte, lt },
       },
       select: { createdAt: true },
     });
@@ -211,12 +228,7 @@ export class ReportsService {
     return result;
   }
 
-  // Converts a 'YYYY-MM-DD' date string into a [start, end) UTC range
-  // covering that whole calendar day.
-  private dayRange(date: string): { start: Date; end: Date } {
-    const start = new Date(`${date}T00:00:00.000Z`);
-    const end = new Date(start);
-    end.setUTCDate(end.getUTCDate() + 1);
-    return { start, end };
+  private dayRange(date: string, timezone?: string): { gte: Date; lt: Date } {
+    return dayRangeInTimezone(date, timezone ?? DEFAULT_TIMEZONE);
   }
 }
