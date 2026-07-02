@@ -136,6 +136,13 @@ model OrderItem {
 
 // ---------- Payments ----------
 
+enum PaymentMethod {
+  CASH
+  CARD
+  TRANSFER
+  STRIPE
+}
+
 enum PaymentStatus {
   REQUIRES_PAYMENT
   PROCESSING
@@ -148,8 +155,9 @@ model Payment {
   id            String        @id @default(uuid())
   orderId       String
   order         Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  method        PaymentMethod @default(CASH)
   provider      String        @default("stripe")
-  providerRef   String        @unique // Stripe PaymentIntent id
+  providerRef   String?       @unique // Stripe PaymentIntent id (null for CASH/CARD/TRANSFER)
   amountCents   Int
   currency      String        @default("usd")
   status        PaymentStatus @default(REQUIRES_PAYMENT)
