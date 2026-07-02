@@ -1,0 +1,3 @@
+-- AlterTable
+ALTER TABLE "payments" ADD COLUMN     "changeCents" INTEGER NOT NULL DEFAULT 0,
+ADD COLUMN     "paidCents" INTEGER NOT NULL DEFAULT 0;
