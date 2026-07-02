@@ -42,7 +42,37 @@ async function main() {
     },
   });
 
+  const cashierEmail = 'cashier@restosync.local';
+  const cashierPasswordHash = await bcrypt.hash('Cashier123!', 10);
+  const cashier = await prisma.user.upsert({
+    where: { email: cashierEmail },
+    update: {},
+    create: {
+      email: cashierEmail,
+      passwordHash: cashierPasswordHash,
+      firstName: 'Regina',
+      lastName: 'Cashier',
+      role: Role.CASHIER,
+    },
+  });
+
+  const managerEmail = 'manager@restosync.local';
+  const managerPasswordHash = await bcrypt.hash('Manager123!', 10);
+  const manager = await prisma.user.upsert({
+    where: { email: managerEmail },
+    update: {},
+    create: {
+      email: managerEmail,
+      passwordHash: managerPasswordHash,
+      firstName: 'Manuel',
+      lastName: 'Manager',
+      role: Role.MANAGER,
+    },
+  });
+
   console.log(`Seeded admin user: ${admin.email} (password: Admin123!)`);
+  console.log(`Seeded cashier user: ${cashier.email} (password: Cashier123!)`);
+  console.log(`Seeded manager user: ${manager.email} (password: Manager123!)`);
 }
 
 main()
