@@ -54,4 +54,40 @@ export class ReportsController {
   getClosedTickets(@Query() query: DateRangeQueryDto) {
     return this.reportsService.getClosedTickets(query.startDate, query.endDate);
   }
+
+  @Get('daily-summary-range')
+  @ApiOperation({ summary: 'Daily sales totals for a date range' })
+  @ApiResponse({
+    status: 200,
+    description: 'Array of daily sales summaries',
+  })
+  getDailySummaryRange(@Query() query: DateRangeQueryDto) {
+    return this.reportsService.getDailySummaryRange(
+      query.startDate,
+      query.endDate,
+    );
+  }
+
+  @Get('payment-methods-range')
+  @ApiOperation({ summary: 'Payment method breakdown for a date range' })
+  @ApiResponse({ status: 200, description: 'Amount per payment method' })
+  getPaymentMethodBreakdownRange(@Query() query: DateRangeQueryDto) {
+    return this.reportsService.getPaymentMethodBreakdownRange(
+      query.startDate,
+      query.endDate,
+    );
+  }
+
+  @Get('tickets-by-day')
+  @ApiOperation({ summary: 'Closed ticket count grouped by day' })
+  @ApiResponse({
+    status: 200,
+    description: 'Array of daily ticket counts',
+  })
+  getTicketCountByDay(@Query() query: DateRangeQueryDto) {
+    return this.reportsService.getTicketCountByDay(
+      query.startDate,
+      query.endDate,
+    );
+  }
 }
