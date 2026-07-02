@@ -1,4 +1,12 @@
-import { Body, Controller, HttpCode, HttpStatus, Post } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Param,
+  Post,
+} from '@nestjs/common';
 import {
   ApiBearerAuth,
   ApiOperation,
@@ -44,5 +52,26 @@ export class CashRegisterController {
     @CurrentUser('id') userId: string,
   ) {
     return this.cashRegisterService.closeSession(dto, userId);
+  }
+
+  @Roles(Role.CASHIER, Role.MANAGER, Role.ADMIN)
+  @Get('sessions/:id/summary')
+  @ApiOperation({ summary: 'Get summary for a specific register session' })
+  @ApiResponse({
+    status: 200,
+    description: 'Session summary with totals by payment method',
+  })
+  @ApiResponse({ status: 404, description: 'Session not found' })
+  getSessionSummary(@Param('id') id: string) {
+    return this.cashRegisterService.getSessionSummary(id);
+  }
+
+  @Roles(Role.CASHIER, Role.MANAGER, Role.ADMIN)
+  @Get('current/summary')
+  @ApiOperation({ summary: 'Get summary for the current active session' })
+  @ApiResponse({ status: 200, description: 'Current session summary' })
+  @ApiResponse({ status: 404, description: 'No active session' })
+  getCurrentSummary() {
+    return this.cashRegisterService.getCurrentSummary();
   }
 }
