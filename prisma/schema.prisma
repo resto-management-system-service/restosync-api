@@ -161,6 +161,8 @@ model Payment {
   provider      String        @default("stripe")
   providerRef   String?       @unique // Stripe PaymentIntent id (null for CASH/CARD/TRANSFER)
   amountCents   Int
+  paidCents      Int           @default(0) // amount physically received
+  changeCents    Int           @default(0) // change given back to customer
   currency      String        @default("usd")
   status        PaymentStatus @default(REQUIRES_PAYMENT)
   lastEventId   String? // last processed webhook event id (idempotency)

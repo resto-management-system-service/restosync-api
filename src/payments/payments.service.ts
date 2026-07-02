@@ -11,8 +11,10 @@ import {
   PaymentStatus,
   Prisma,
 } from '@prisma/client';
+import { canTransition } from '../orders/order-status';
 import { OrdersService } from '../orders/orders.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { CheckoutDto } from './dto/checkout.dto';
 import {
   GatewayEvent,
   PAYMENT_GATEWAY,
@@ -69,6 +71,77 @@ export class PaymentsService {
       amountCents: order.totalCents,
       currency: order.currency,
     };
+  }
+
+  // POS checkout: closes the order, records a payment, and attaches it to
+  // the active cash register session — all in a single transaction.
+  async checkout(dto: CheckoutDto, actorId: string) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: dto.orderId },
+    });
+    if (!order) {
+      throw new NotFoundException('Order not found');
+    }
+    if (order.status !== OrderStatus.PENDING) {
+      throw new BadRequestException(
+        `Order is ${order.status} and cannot be checked out`,
+      );
+    }
+
+    const activeSession = await this.prisma.cashRegisterSession.findFirst({
+      where: { closedAt: null },
+      orderBy: { openedAt: 'desc' },
+    });
+    if (!activeSession) {
+      throw new BadRequestException('No active cash register session');
+    }
+
+    // Idempotency: never double-charge an already-paid order.
+    const existingPayment = await this.prisma.payment.findFirst({
+      where: { orderId: order.id, status: PaymentStatus.SUCCEEDED },
+      include: { order: true },
+    });
+    if (existingPayment) {
+      return existingPayment;
+    }
+
+    // Amount comes from the order's server-computed total, never the client.
+    if (
+      dto.method === PaymentMethod.CASH &&
+      dto.amountPaidCents < order.totalCents
+    ) {
+      throw new BadRequestException('Insufficient payment amount');
+    }
+
+    this.logger.debug(`Checkout for order ${order.id} by user ${actorId}`);
+
+    return this.prisma.$transaction(async (tx) => {
+      if (!canTransition(order.status, OrderStatus.CONFIRMED)) {
+        throw new BadRequestException(
+          `Cannot transition order from ${order.status} to ${OrderStatus.CONFIRMED}`,
+        );
+      }
+      await tx.order.update({
+        where: { id: order.id },
+        data: { status: OrderStatus.CONFIRMED },
+      });
+
+      return tx.payment.create({
+        data: {
+          orderId: order.id,
+          method: dto.method,
+          provider: 'pos',
+          providerRef: null,
+          amountCents: order.totalCents,
+          paidCents: dto.amountPaidCents,
+          changeCents: Math.max(0, dto.amountPaidCents - order.totalCents),
+          currency: order.currency,
+          status: PaymentStatus.SUCCEEDED,
+          sessionId: activeSession.id,
+        },
+        include: { order: true },
+      });
+    });
   }
 
   async handleWebhook(payload: Buffer, signature: string) {
