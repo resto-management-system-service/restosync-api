@@ -56,6 +56,20 @@ async function main() {
     },
   });
 
+  const waiterEmail = 'waiter@restosync.local';
+  const waiterPasswordHash = await bcrypt.hash('Waiter123!', 10);
+  const waiter = await prisma.user.upsert({
+    where: { email: waiterEmail },
+    update: {},
+    create: {
+      email: waiterEmail,
+      passwordHash: waiterPasswordHash,
+      firstName: 'Walter',
+      lastName: 'Waiter',
+      role: Role.WAITER,
+    },
+  });
+
   const managerEmail = 'manager@restosync.local';
   const managerPasswordHash = await bcrypt.hash('Manager123!', 10);
   const manager = await prisma.user.upsert({
@@ -72,6 +86,7 @@ async function main() {
 
   console.log(`Seeded admin user: ${admin.email} (password: Admin123!)`);
   console.log(`Seeded cashier user: ${cashier.email} (password: Cashier123!)`);
+  console.log(`Seeded waiter user: ${waiter.email} (password: Waiter123!)`);
   console.log(`Seeded manager user: ${manager.email} (password: Manager123!)`);
 }
 
