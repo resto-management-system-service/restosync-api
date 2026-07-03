@@ -25,6 +25,9 @@ export class MenuItemsController {
   constructor(private readonly menuItemsService: MenuItemsService) {}
 
   @Public()
+  @ApiOperation({
+    summary: 'List menu items with optional name search and pagination',
+  })
   @Get()
   findAll(@Query() query: MenuItemQueryDto) {
     return this.menuItemsService.findAll(query);

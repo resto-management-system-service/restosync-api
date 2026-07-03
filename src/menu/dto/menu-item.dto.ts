@@ -54,6 +54,14 @@ export class CreateMenuItemDto {
 export class UpdateMenuItemDto extends PartialType(CreateMenuItemDto) {}
 
 export class MenuItemQueryDto extends PaginationQueryDto {
+  @ApiPropertyOptional({
+    description: 'Filter by product name (case-insensitive)',
+    example: 'ceviche',
+  })
+  @IsOptional()
+  @IsString()
+  name?: string;
+
   @ApiPropertyOptional({ format: 'uuid' })
   @IsOptional()
   @IsUUID()
