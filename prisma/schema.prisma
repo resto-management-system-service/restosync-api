@@ -253,3 +253,20 @@ model StockAdjustment {
   @@index([inventoryItemId])
   @@map("stock_adjustments")
 }
+
+// ---------- Audit ----------
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  entityType String // e.g. "Order", "MenuItem", "InventoryItem"
+  entityId   String
+  action     String // e.g. "DISCOUNT_APPLIED", "PRICE_CHANGED", "STOCK_ADJUSTED"
+  userId     String
+  metadata   Json?
+  createdAt  DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([userId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
