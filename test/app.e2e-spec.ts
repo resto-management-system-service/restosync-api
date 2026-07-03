@@ -828,4 +828,89 @@ describe('RestoSync API (e2e)', () => {
         .expect(200);
     });
   });
+
+  describe('order discount audit trail', () => {
+    let adminToken: string;
+    let managerToken: string;
+    let cashierToken: string;
+    let categoryId: string;
+    let burgerId: string;
+    let orderId: string;
+
+    beforeAll(async () => {
+      const adminLogin = await request(app.getHttpServer())
+        .post('/api/auth/login')
+        .send({ email: 'admin@restosync.local', password: 'Admin123!' })
+        .expect(200);
+      adminToken = adminLogin.body.accessToken;
+
+      const managerLogin = await request(app.getHttpServer())
+        .post('/api/auth/login')
+        .send({ email: 'manager@restosync.local', password: 'Manager123!' })
+        .expect(200);
+      managerToken = managerLogin.body.accessToken;
+
+      const cashierLogin = await request(app.getHttpServer())
+        .post('/api/auth/login')
+        .send({ email: 'cashier@restosync.local', password: 'Cashier123!' })
+        .expect(200);
+      cashierToken = cashierLogin.body.accessToken;
+
+      const category = await request(app.getHttpServer())
+        .post('/api/menu/categories')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ name: `Audit_${Date.now()}` })
+        .expect(201);
+      categoryId = category.body.id;
+
+      const burger = await request(app.getHttpServer())
+        .post('/api/menu/items')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          name: 'Audit Burger',
+          priceCents: 1000,
+          categoryId,
+        })
+        .expect(201);
+      burgerId = burger.body.id;
+
+      const order = await request(app.getHttpServer())
+        .post('/api/orders')
+        .set('Authorization', `Bearer ${cashierToken}`)
+        .send({
+          type: 'DINE_IN',
+          table: 'A1',
+          items: [{ menuItemId: burgerId, quantity: 1 }],
+        })
+        .expect(201);
+      orderId = order.body.id;
+
+      await request(app.getHttpServer())
+        .patch(`/api/orders/${orderId}/discount`)
+        .set('Authorization', `Bearer ${cashierToken}`)
+        .send({ discountType: 'FIXED', discountCents: 100, reason: 'comp' })
+        .expect(200);
+    });
+
+    it('GET /api/orders/:id/audit-log as MANAGER returns 200 with entries', async () => {
+      const res = await request(app.getHttpServer())
+        .get(`/api/orders/${orderId}/audit-log`)
+        .set('Authorization', `Bearer ${managerToken}`)
+        .expect(200);
+
+      expect(Array.isArray(res.body)).toBe(true);
+      expect(res.body.length).toBeGreaterThan(0);
+      const entry = res.body[0];
+      expect(entry.entityType).toBe('Order');
+      expect(entry.entityId).toBe(orderId);
+      expect(entry.action).toBe('DISCOUNT_APPLIED');
+    });
+
+    it('GET /api/orders/:id/audit-log as CASHIER is forbidden', async () => {
+      await request(app.getHttpServer())
+        .get(`/api/orders/${orderId}/audit-log`)
+        .set('Authorization', `Bearer ${cashierToken}`)
+        .expect(403);
+    });
+  });
 });

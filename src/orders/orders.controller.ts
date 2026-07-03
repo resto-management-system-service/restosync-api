@@ -15,6 +15,7 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { Role } from '@prisma/client';
+import { AuditService } from '../audit/audit.service';
 import {
   AuthUser,
   CurrentUser,
@@ -32,7 +33,10 @@ import { OrdersService } from './orders.service';
 @ApiBearerAuth()
 @Controller('orders')
 export class OrdersController {
-  constructor(private readonly ordersService: OrdersService) {}
+  constructor(
+    private readonly ordersService: OrdersService,
+    private readonly auditService: AuditService,
+  ) {}
 
   @Post()
   @Roles(Role.WAITER, Role.CASHIER, Role.MANAGER, Role.ADMIN)
@@ -172,5 +176,19 @@ export class OrdersController {
     @CurrentUser('id') userId: string,
   ) {
     return this.ordersService.applyDiscount(id, dto, userId);
+  }
+
+  @ApiBearerAuth()
+  @ApiTags('orders')
+  @Roles(Role.MANAGER, Role.ADMIN)
+  @Get(':id/audit-log')
+  @ApiOperation({ summary: 'Get the audit history for an order' })
+  @ApiResponse({
+    status: 200,
+    description: 'List of audit entries, newest first',
+  })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  getAuditLog(@Param('id') id: string) {
+    return this.auditService.findByEntity('Order', id);
   }
 }

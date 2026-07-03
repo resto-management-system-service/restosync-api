@@ -12,6 +12,7 @@ import {
   PaginationQueryDto,
 } from '../common/dto/pagination-query.dto';
 import { AuthUser } from '../auth/decorators/current-user.decorator';
+import { AuditService } from '../audit/audit.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { AddOrderItemDto } from './dto/add-order-item.dto';
 import { ApplyDiscountDto } from './dto/apply-discount.dto';
@@ -29,7 +30,10 @@ const orderInclude = { items: true } satisfies Prisma.OrderInclude;
 export class OrdersService {
   private readonly TAX_RATE = 0;
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly auditService: AuditService,
+  ) {}
 
   async create(dto: CreateOrderDto, customerId?: string) {
     const itemIds = dto.items.map((i) => i.menuItemId);
@@ -348,6 +352,22 @@ export class OrdersService {
         discountAppliedBy: appliedByUserId,
         discountAppliedAt: new Date(),
         discountReason: dto.reason ?? null,
+      },
+    });
+
+    await this.auditService.log({
+      entityType: 'Order',
+      entityId: orderId,
+      action: 'DISCOUNT_APPLIED',
+      userId: appliedByUserId,
+      metadata: {
+        discountType: dto.discountType,
+        discountCents: resolvedDiscountCents,
+        discountPercent:
+          dto.discountType === DiscountType.PERCENTAGE
+            ? dto.discountPercent
+            : undefined,
+        reason: dto.reason,
       },
     });
 

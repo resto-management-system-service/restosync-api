@@ -2,6 +2,7 @@ import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { OrderStatus, OrderType } from '@prisma/client';
 import { OrdersService } from './orders.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { AuditService } from '../audit/audit.service';
 
 type MockPrisma = {
   order: {
@@ -39,9 +40,22 @@ function createMockPrisma(): MockPrisma {
   };
 }
 
+type MockAuditService = {
+  log: jest.Mock;
+  findByEntity: jest.Mock;
+};
+
+function createMockAuditService(): MockAuditService {
+  return {
+    log: jest.fn().mockResolvedValue(undefined),
+    findByEntity: jest.fn(),
+  };
+}
+
 describe('OrdersService', () => {
   let service: OrdersService;
   let prisma: MockPrisma;
+  let auditService: MockAuditService;
 
   const orderId = 'order-1';
   const menuItemId = 'menu-item-1';
@@ -61,7 +75,11 @@ describe('OrdersService', () => {
 
   beforeEach(() => {
     prisma = createMockPrisma();
-    service = new OrdersService(prisma as unknown as PrismaService);
+    auditService = createMockAuditService();
+    service = new OrdersService(
+      prisma as unknown as PrismaService,
+      auditService as unknown as AuditService,
+    );
   });
 
   describe('addItem', () => {
