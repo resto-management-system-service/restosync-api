@@ -1,4 +1,5 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { OrderStatus, OrderType } from '@prisma/client';
 import { OrdersService } from './orders.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -52,10 +53,30 @@ function createMockAuditService(): MockAuditService {
   };
 }
 
+type MockConfigService = {
+  get: jest.Mock;
+};
+
+// Defaults tax.rate to 0 so pre-existing tests (written before #7 added
+// configurable tax) keep asserting the same totals. Individual tests can
+// override via `config.get.mockImplementation(...)` to exercise non-zero
+// tax rates.
+function createMockConfigService(): MockConfigService {
+  return {
+    get: jest.fn((key: string) => {
+      if (key === 'tax.rate') {
+        return 0;
+      }
+      return undefined;
+    }),
+  };
+}
+
 describe('OrdersService', () => {
   let service: OrdersService;
   let prisma: MockPrisma;
   let auditService: MockAuditService;
+  let config: MockConfigService;
 
   const orderId = 'order-1';
   const menuItemId = 'menu-item-1';
@@ -76,9 +97,11 @@ describe('OrdersService', () => {
   beforeEach(() => {
     prisma = createMockPrisma();
     auditService = createMockAuditService();
+    config = createMockConfigService();
     service = new OrdersService(
       prisma as unknown as PrismaService,
       auditService as unknown as AuditService,
+      config as unknown as ConfigService,
     );
   });
 
@@ -344,6 +367,61 @@ describe('OrdersService', () => {
       expect(result.subtotalCents).toBe(0);
       expect(result.taxCents).toBe(0);
       expect(result.totalCents).toBe(0);
+    });
+
+    it('computes a non-zero taxCents when config("tax.rate") returns a non-zero rate', async () => {
+      config.get.mockImplementation((key: string) =>
+        key === 'tax.rate' ? 0.18 : undefined,
+      );
+      prisma.orderItem.findMany.mockResolvedValue([
+        { priceCents: 1000, quantity: 1 },
+      ]);
+      prisma.order.update.mockImplementation(({ data }) =>
+        Promise.resolve({ ...baseOrder, ...data }),
+      );
+
+      const result = await (service as any).recalculateTotals(orderId);
+
+      expect(config.get).toHaveBeenCalledWith('tax.rate');
+      // 1000 * 0.18 = 180
+      expect(result.taxCents).toBe(180);
+      expect(result.subtotalCents).toBe(1000);
+      expect(result.totalCents).toBe(1180);
+    });
+
+    it('still produces taxCents = 0 when config("tax.rate") returns 0 (default/dev behavior)', async () => {
+      config.get.mockImplementation((key: string) =>
+        key === 'tax.rate' ? 0 : undefined,
+      );
+      prisma.orderItem.findMany.mockResolvedValue([
+        { priceCents: 1000, quantity: 1 },
+      ]);
+      prisma.order.update.mockImplementation(({ data }) =>
+        Promise.resolve({ ...baseOrder, ...data }),
+      );
+
+      const result = await (service as any).recalculateTotals(orderId);
+
+      expect(result.taxCents).toBe(0);
+      expect(result.totalCents).toBe(1000);
+    });
+
+    it('subtotalCents + taxCents === totalCents when discountCents is 0', async () => {
+      config.get.mockImplementation((key: string) =>
+        key === 'tax.rate' ? 0.21 : undefined,
+      );
+      prisma.order.findUnique.mockResolvedValue({ discountCents: 0 });
+      prisma.orderItem.findMany.mockResolvedValue([
+        { priceCents: 1200, quantity: 2 },
+        { priceCents: 500, quantity: 1 },
+      ]);
+      prisma.order.update.mockImplementation(({ data }) =>
+        Promise.resolve({ ...baseOrder, ...data }),
+      );
+
+      const result = await (service as any).recalculateTotals(orderId);
+
+      expect(result.subtotalCents + result.taxCents).toBe(result.totalCents);
     });
   });
 });

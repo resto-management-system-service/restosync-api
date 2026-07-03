@@ -4,6 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { DiscountType, OrderStatus, Prisma, Role } from '@prisma/client';
 import { randomBytes } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
@@ -28,11 +29,10 @@ const orderInclude = { items: true } satisfies Prisma.OrderInclude;
 
 @Injectable()
 export class OrdersService {
-  private readonly TAX_RATE = 0;
-
   constructor(
     private readonly prisma: PrismaService,
     private readonly auditService: AuditService,
+    private readonly config: ConfigService,
   ) {}
 
   async create(dto: CreateOrderDto, customerId?: string) {
@@ -293,7 +293,8 @@ export class OrdersService {
       (sum, item) => sum + item.priceCents * item.quantity,
       0,
     );
-    const taxCents = Math.round(subtotalCents * this.TAX_RATE);
+    const taxRate = this.config.get<number>('tax.rate') ?? 0;
+    const taxCents = Math.round(subtotalCents * taxRate);
     const totalCents = Math.max(
       0,
       subtotalCents + taxCents - (order?.discountCents ?? 0),

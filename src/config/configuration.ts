@@ -18,4 +18,10 @@ export default () => ({
     // Stripe webhook endpoint with its own signing secret.
     billingWebhookSecret: process.env.STRIPE_BILLING_WEBHOOK_SECRET || '',
   },
+  tax: {
+    // Decimal tax rate (e.g. 0.18 = 18%). Validated in env.validation.ts:
+    // required + range-checked (0-1) in production, optional (defaults to
+    // 0) in development/test.
+    rate: parseFloat(process.env.TAX_RATE || '0'),
+  },
 });
