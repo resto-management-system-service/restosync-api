@@ -49,7 +49,7 @@ export class MenuItemsController {
   @ApiBearerAuth()
   @Roles(Role.ADMIN)
   @ApiOperation({
-    summary: 'Update a menu item (imageUrl accepts a public URL)',
+    summary: 'Associate a public image URL with a product',
   })
   @Patch(':id')
   update(@Param('id') id: string, @Body() dto: UpdateMenuItemDto) {
