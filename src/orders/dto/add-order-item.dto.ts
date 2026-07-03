@@ -1,6 +1,12 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsInt, IsObject, IsOptional, IsUUID, Min, IsString } from 'class-validator';
-
+import {
+  IsInt,
+  IsObject,
+  IsOptional,
+  IsUUID,
+  Min,
+  IsString,
+} from 'class-validator';
 
 export class AddOrderItemDto {
   @ApiProperty({ format: 'uuid' })

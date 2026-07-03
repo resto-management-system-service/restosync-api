@@ -22,6 +22,7 @@ import {
 import { Roles } from '../auth/decorators/roles.decorator';
 import { PaginationQueryDto } from '../common/dto/pagination-query.dto';
 import { AddOrderItemDto } from './dto/add-order-item.dto';
+import { ApplyDiscountDto } from './dto/apply-discount.dto';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderItemDto } from './dto/update-order-item.dto';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
@@ -145,5 +146,24 @@ export class OrdersController {
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   confirmOrder(@Param('id') id: string) {
     return this.ordersService.confirmOrder(id);
+  }
+
+  @ApiBearerAuth()
+  @ApiTags('orders')
+  @Roles(Role.CASHIER, Role.MANAGER, Role.ADMIN)
+  @Patch(':id/discount')
+  @ApiOperation({ summary: 'Apply a discount to an open order' })
+  @ApiResponse({
+    status: 200,
+    description: 'Discount applied, total recomputed',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Order not editable or discount exceeds subtotal',
+  })
+  @ApiResponse({ status: 404, description: 'Order not found' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  applyDiscount(@Param('id') id: string, @Body() dto: ApplyDiscountDto) {
+    return this.ordersService.applyDiscount(id, dto);
   }
 }
