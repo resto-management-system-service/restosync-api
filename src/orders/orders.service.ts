@@ -4,7 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { OrderStatus, Prisma, Role } from '@prisma/client';
+import { DiscountType, OrderStatus, Prisma, Role } from '@prisma/client';
 import { randomBytes } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import {
@@ -302,7 +302,11 @@ export class OrdersService {
     });
   }
 
-  async applyDiscount(orderId: string, dto: ApplyDiscountDto) {
+  async applyDiscount(
+    orderId: string,
+    dto: ApplyDiscountDto,
+    appliedByUserId: string,
+  ) {
     const order = await this.prisma.order.findUnique({
       where: { id: orderId },
     });
@@ -323,13 +327,28 @@ export class OrdersService {
       0,
     );
 
-    if (dto.discountCents > subtotalCents) {
+    const resolvedDiscountCents =
+      dto.discountType === DiscountType.PERCENTAGE
+        ? Math.floor((subtotalCents * (dto.discountPercent ?? 0)) / 100)
+        : (dto.discountCents ?? 0);
+
+    if (resolvedDiscountCents > subtotalCents) {
       throw new BadRequestException('Discount cannot exceed order subtotal');
     }
 
     await this.prisma.order.update({
       where: { id: orderId },
-      data: { discountCents: dto.discountCents },
+      data: {
+        discountCents: resolvedDiscountCents,
+        discountType: dto.discountType,
+        discountPercent:
+          dto.discountType === DiscountType.PERCENTAGE
+            ? dto.discountPercent
+            : null,
+        discountAppliedBy: appliedByUserId,
+        discountAppliedAt: new Date(),
+        discountReason: dto.reason ?? null,
+      },
     });
 
     return this.recalculateTotals(orderId);
