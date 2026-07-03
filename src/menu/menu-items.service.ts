@@ -25,6 +25,9 @@ export class MenuItemsService {
 
   async findAll(query: MenuItemQueryDto) {
     const where: Prisma.MenuItemWhereInput = {};
+    if (query.name) {
+      where.name = { contains: query.name, mode: 'insensitive' };
+    }
     if (query.categoryId) {
       where.categoryId = query.categoryId;
     }
