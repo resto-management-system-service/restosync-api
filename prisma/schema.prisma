@@ -91,6 +91,11 @@ enum OrderType {
   TAKEAWAY
 }
 
+enum DiscountType {
+  FIXED
+  PERCENTAGE
+}
+
 enum OrderStatus {
   DRAFT
   PENDING
@@ -113,6 +118,11 @@ model Order {
   taxCents     Int         @default(0)
   totalCents   Int         @default(0)
   discountCents Int        @default(0)
+  discountType  DiscountType @default(FIXED)
+  discountPercent   Int?
+  discountAppliedBy String?
+  discountAppliedAt DateTime?
+  discountReason    String?
   currency     String      @default("usd")
   notes        String?
   items        OrderItem[]

@@ -152,18 +152,25 @@ export class OrdersController {
   @ApiTags('orders')
   @Roles(Role.CASHIER, Role.MANAGER, Role.ADMIN)
   @Patch(':id/discount')
-  @ApiOperation({ summary: 'Apply a discount to an open order' })
+  @ApiOperation({
+    summary: 'Apply a fixed or percentage discount to an open order',
+  })
   @ApiResponse({
     status: 200,
-    description: 'Discount applied, total recomputed',
+    description: 'Discount applied, total recomputed, audit recorded',
   })
   @ApiResponse({
     status: 400,
-    description: 'Order not editable or discount exceeds subtotal',
+    description:
+      'Invalid discount, order not editable, or discount exceeds subtotal',
   })
   @ApiResponse({ status: 404, description: 'Order not found' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
-  applyDiscount(@Param('id') id: string, @Body() dto: ApplyDiscountDto) {
-    return this.ordersService.applyDiscount(id, dto);
+  applyDiscount(
+    @Param('id') id: string,
+    @Body() dto: ApplyDiscountDto,
+    @CurrentUser('id') userId: string,
+  ) {
+    return this.ordersService.applyDiscount(id, dto, userId);
   }
 }
