@@ -1,11 +1,15 @@
 import {
   IsNotEmpty,
+  IsNumber,
   IsNumberString,
   IsOptional,
   IsString,
+  Max,
+  Min,
+  ValidateIf,
   validateSync,
 } from 'class-validator';
-import { plainToInstance } from 'class-transformer';
+import { plainToInstance, Transform } from 'class-transformer';
 
 class EnvironmentVariables {
   @IsOptional()
@@ -39,6 +43,27 @@ class EnvironmentVariables {
   @IsOptional()
   @IsString()
   STRIPE_BILLING_WEBHOOK_SECRET?: string;
+
+  // Decimal tax rate (e.g. "0.18" = 18%). REQUIRED when NODE_ENV=production;
+  // optional (defaults to 0) in development/test. Whenever provided, must
+  // be a valid number between 0 and 1 inclusive, regardless of environment.
+  // NOTE: intentionally does NOT combine @IsOptional() with @ValidateIf() —
+  // that combination was a confirmed bug (see #29): @IsOptional() causes
+  // validation to be skipped entirely whenever the value is undefined,
+  // which would make @ValidateIf's condition irrelevant.
+  @ValidateIf(
+    (o) =>
+      o.NODE_ENV === 'production' ||
+      (o.TAX_RATE !== undefined && o.TAX_RATE !== ''),
+  )
+  @Transform(({ value }) =>
+    value === undefined || value === '' ? value : parseFloat(value),
+  )
+  @IsNotEmpty({ message: 'TAX_RATE is required when NODE_ENV=production' })
+  @IsNumber({}, { message: 'TAX_RATE must be a valid number' })
+  @Min(0, { message: 'TAX_RATE must be between 0 and 1' })
+  @Max(1, { message: 'TAX_RATE must be between 0 and 1' })
+  TAX_RATE?: string;
 }
 
 export function validateEnv(config: Record<string, unknown>) {
