@@ -5,6 +5,7 @@ import { AppController } from './app.controller';
 import { AuthModule } from './auth/auth.module';
 import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
 import { RolesGuard } from './auth/guards/roles.guard';
+import { BillingModule } from './billing/billing.module';
 import configuration from './config/configuration';
 import { validateEnv } from './config/env.validation';
 import { CashRegisterModule } from './cash-register/cash-register.module';
@@ -32,6 +33,7 @@ import { UsersModule } from './users/users.module';
     CashRegisterModule,
     ReportsModule,
     InventoryModule,
+    BillingModule,
   ],
   controllers: [AppController],
   providers: [

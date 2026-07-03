@@ -270,3 +270,20 @@ model AuditLog {
   @@index([createdAt])
   @@map("audit_logs")
 }
+
+// ---------- Billing (SaaS subscription — restaurant pays RestoSync) ----------
+// Decoupled from src/payments/ (POS checkout, diner pays restaurant).
+// See src/billing/README.md for the boundary between the two concerns.
+
+model Subscription {
+  id                   String    @id @default(uuid())
+  stripeCustomerId     String    @unique
+  stripeSubscriptionId String?   @unique
+  status               String // "active" | "past_due" | "canceled" | "trialing"
+  planName             String // free-form for now, e.g. "starter"
+  currentPeriodEnd     DateTime?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  @@map("subscriptions")
+}
