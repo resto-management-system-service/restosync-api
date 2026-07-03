@@ -14,7 +14,9 @@ describe('RestoSync API (e2e)', () => {
       imports: [AppModule],
     }).compile();
 
-    app = moduleRef.createNestApplication();
+    // rawBody is required so Stripe webhook signature verification works,
+    // matching main.ts's NestFactory.create(AppModule, { rawBody: true }).
+    app = moduleRef.createNestApplication({ rawBody: true });
     app.setGlobalPrefix('api', { exclude: ['health'] });
     app.useGlobalPipes(
       new ValidationPipe({ whitelist: true, transform: true }),
@@ -911,6 +913,37 @@ describe('RestoSync API (e2e)', () => {
         .get(`/api/orders/${orderId}/audit-log`)
         .set('Authorization', `Bearer ${cashierToken}`)
         .expect(403);
+    });
+  });
+
+  describe('billing webhook (SaaS subscription, decoupled from POS payments)', () => {
+    it('POST /api/billing/webhook with an invalid signature returns 400', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/api/billing/webhook')
+        .set('stripe-signature', 'invalid-signature')
+        .send({ type: 'customer.subscription.updated', data: { object: {} } })
+        .expect(400);
+
+      expect(res.body.statusCode).toBe(400);
+    });
+
+    it('POST /api/billing/webhook with no stripe-signature header returns 400', async () => {
+      await request(app.getHttpServer())
+        .post('/api/billing/webhook')
+        .send({ type: 'customer.subscription.updated', data: { object: {} } })
+        .expect(400);
+    });
+
+    it('POST /api/billing/webhook does not require authentication (public endpoint)', async () => {
+      // No Authorization header at all — still reaches the handler (which
+      // then 400s on signature verification) instead of a 401, confirming
+      // the endpoint is public like the existing payments webhook.
+      const res = await request(app.getHttpServer())
+        .post('/api/billing/webhook')
+        .set('stripe-signature', 'invalid-signature')
+        .send({});
+
+      expect(res.status).not.toBe(401);
     });
   });
 });

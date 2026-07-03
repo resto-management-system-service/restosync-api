@@ -10,7 +10,12 @@ export default () => ({
   },
   stripe: {
     secretKey: process.env.STRIPE_SECRET_KEY || '',
+    // POS checkout webhook (src/payments/) — diner-facing PaymentIntents.
     webhookSecret: process.env.STRIPE_WEBHOOK_SECRET || '',
     currency: process.env.STRIPE_CURRENCY || 'usd',
+    // SaaS billing webhook (src/billing/) — restaurant pays RestoSync.
+    // Deliberately separate from webhookSecret above: this is a distinct
+    // Stripe webhook endpoint with its own signing secret.
+    billingWebhookSecret: process.env.STRIPE_BILLING_WEBHOOK_SECRET || '',
   },
 });

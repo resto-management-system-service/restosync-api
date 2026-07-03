@@ -35,6 +35,10 @@ class EnvironmentVariables {
   @IsOptional()
   @IsString()
   STRIPE_WEBHOOK_SECRET?: string;
+
+  @IsOptional()
+  @IsString()
+  STRIPE_BILLING_WEBHOOK_SECRET?: string;
 }
 
 export function validateEnv(config: Record<string, unknown>) {
