@@ -1,6 +1,5 @@
 import { Injectable } from '@nestjs/common';
 import { OrderStatus, PaymentMethod, PaymentStatus } from '@prisma/client';
-import { dayRangeInTimezone, DEFAULT_TIMEZONE } from '../common/utils/timezone';
 import { PrismaService } from '../prisma/prisma.service';
 
 const SALE_STATUSES: OrderStatus[] = [
@@ -228,7 +227,10 @@ export class ReportsService {
     return result;
   }
 
-  private dayRange(date: string, timezone?: string): { gte: Date; lt: Date } {
-    return dayRangeInTimezone(date, timezone ?? DEFAULT_TIMEZONE);
+  private dayRange(date: string, _timezone?: string): { gte: Date; lt: Date } {
+    void _timezone;
+    const start = new Date(date + 'T00:00:00.000Z');
+    const end = new Date(date + 'T23:59:59.999Z');
+    return { gte: start, lt: end };
   }
 }
