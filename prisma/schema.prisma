@@ -135,6 +135,7 @@ model OrderItem {
   priceCents    Int
   quantity      Int
   modifiers     Json?
+  notes         String?
   lineTotalCents Int
 
   @@index([orderId])

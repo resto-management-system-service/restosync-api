@@ -35,7 +35,9 @@ export class OrdersController {
 
   @Post()
   @Roles(Role.WAITER, Role.CASHIER, Role.MANAGER, Role.ADMIN)
-  @ApiOperation({ summary: 'Open a new order' })
+  @ApiOperation({
+    summary: 'Open a new order (supports notes per order and per line)',
+  })
   @ApiResponse({ status: 201, description: 'Order created in DRAFT status' })
   @ApiResponse({ status: 400, description: 'Validation error' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
@@ -76,7 +78,9 @@ export class OrdersController {
   @ApiTags('orders')
   @Roles(Role.WAITER, Role.CASHIER, Role.MANAGER, Role.ADMIN)
   @Post(':id/items')
-  @ApiOperation({ summary: 'Add a product to an open order' })
+  @ApiOperation({
+    summary: 'Add a product to an open order (supports per-line kitchen notes)',
+  })
   @ApiResponse({
     status: 201,
     description: 'Item added with price snapshot, total recomputed',
@@ -95,7 +99,7 @@ export class OrdersController {
   @ApiTags('orders')
   @Roles(Role.WAITER, Role.CASHIER, Role.MANAGER, Role.ADMIN)
   @Patch(':id/items/:itemId')
-  @ApiOperation({ summary: 'Change quantity of an order line' })
+  @ApiOperation({ summary: 'Change quantity or notes of an order line' })
   @ApiResponse({
     status: 200,
     description: 'Quantity updated, total recomputed',
