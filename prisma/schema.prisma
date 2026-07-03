@@ -112,6 +112,7 @@ model Order {
   subtotalCents Int        @default(0)
   taxCents     Int         @default(0)
   totalCents   Int         @default(0)
+  discountCents Int        @default(0)
   currency     String      @default("usd")
   notes        String?
   items        OrderItem[]

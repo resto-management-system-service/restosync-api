@@ -14,6 +14,7 @@ import {
 import { AuthUser } from '../auth/decorators/current-user.decorator';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { AddOrderItemDto } from './dto/add-order-item.dto';
+import { ApplyDiscountDto } from './dto/apply-discount.dto';
 import { UpdateOrderItemDto } from './dto/update-order-item.dto';
 import { canTransition } from './order-status';
 
@@ -279,19 +280,59 @@ export class OrdersService {
   }
 
   private async recalculateTotals(orderId: string) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      select: { discountCents: true },
+    });
     const items = await this.prisma.orderItem.findMany({ where: { orderId } });
     const subtotalCents = items.reduce(
       (sum, item) => sum + item.priceCents * item.quantity,
       0,
     );
     const taxCents = Math.round(subtotalCents * this.TAX_RATE);
-    const totalCents = subtotalCents + taxCents;
+    const totalCents = Math.max(
+      0,
+      subtotalCents + taxCents - (order?.discountCents ?? 0),
+    );
 
     return this.prisma.order.update({
       where: { id: orderId },
       data: { subtotalCents, taxCents, totalCents },
       include: orderInclude,
     });
+  }
+
+  async applyDiscount(orderId: string, dto: ApplyDiscountDto) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+    });
+    if (!order) {
+      throw new NotFoundException('Order not found');
+    }
+    if (!EDITABLE_STATUSES.includes(order.status)) {
+      throw new BadRequestException(
+        `Cannot apply discount to an order with status ${order.status}`,
+      );
+    }
+
+    const items = await this.prisma.orderItem.findMany({
+      where: { orderId },
+    });
+    const subtotalCents = items.reduce(
+      (sum, item) => sum + item.priceCents * item.quantity,
+      0,
+    );
+
+    if (dto.discountCents > subtotalCents) {
+      throw new BadRequestException('Discount cannot exceed order subtotal');
+    }
+
+    await this.prisma.order.update({
+      where: { id: orderId },
+      data: { discountCents: dto.discountCents },
+    });
+
+    return this.recalculateTotals(orderId);
   }
 
   private generateOrderNumber(): string {
