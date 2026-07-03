@@ -33,6 +33,11 @@ export class OrderLineDto {
   @IsOptional()
   @IsObject()
   modifiers?: Record<string, unknown>;
+
+  @ApiPropertyOptional({ description: 'Kitchen instructions for this item' })
+  @IsOptional()
+  @IsString()
+  notes?: string;
 }
 
 export class CreateOrderDto {

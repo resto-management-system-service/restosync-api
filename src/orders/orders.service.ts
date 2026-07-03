@@ -56,6 +56,7 @@ export class OrdersService {
         priceCents: item.priceCents,
         quantity: line.quantity,
         modifiers: (line.modifiers ?? undefined) as Prisma.InputJsonValue,
+        notes: line.notes,
         lineTotalCents,
       };
     });
@@ -177,6 +178,7 @@ export class OrdersService {
         priceCents: menuItem.priceCents,
         quantity: dto.quantity,
         modifiers: (dto.modifiers ?? null) as Prisma.InputJsonValue,
+        notes: dto.notes,
         lineTotalCents,
       },
     });
@@ -208,11 +210,20 @@ export class OrdersService {
       throw new NotFoundException('Order item not found');
     }
 
-    const lineTotalCents = orderItem.priceCents * dto.quantity;
+    const effectiveQuantity = dto.quantity ?? orderItem.quantity;
+    const lineTotalCents = orderItem.priceCents * effectiveQuantity;
+
+    const updateData: Prisma.OrderItemUpdateInput = {
+      quantity: effectiveQuantity,
+      lineTotalCents,
+    };
+    if (dto.notes !== undefined) {
+      updateData.notes = dto.notes;
+    }
 
     await this.prisma.orderItem.update({
       where: { id: orderItemId },
-      data: { quantity: dto.quantity, lineTotalCents },
+      data: updateData,
     });
 
     return this.recalculateTotals(orderId);

@@ -1,5 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsInt, IsObject, IsOptional, IsUUID, Min } from 'class-validator';
+import { IsInt, IsObject, IsOptional, IsUUID, Min, IsString } from 'class-validator';
+
 
 export class AddOrderItemDto {
   @ApiProperty({ format: 'uuid' })
@@ -18,4 +19,9 @@ export class AddOrderItemDto {
   @IsOptional()
   @IsObject()
   modifiers?: Record<string, unknown>;
+
+  @ApiPropertyOptional({ description: 'Kitchen instructions for this item' })
+  @IsOptional()
+  @IsString()
+  notes?: string;
 }
