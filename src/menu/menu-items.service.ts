@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { paginate } from '../common/dto/pagination-query.dto';
@@ -52,6 +56,25 @@ export class MenuItemsService {
 
   async remove(id: string) {
     await this.findOne(id);
+
+    const orderItemCount = await this.prisma.orderItem.count({
+      where: { menuItemId: id },
+    });
+
+    if (orderItemCount > 0) {
+      throw new BadRequestException(
+        'Cannot delete a product with order history. Set available = false instead.',
+      );
+    }
+
     return this.prisma.menuItem.delete({ where: { id } });
+  }
+
+  async deactivate(id: string) {
+    await this.findOne(id);
+    return this.prisma.menuItem.update({
+      where: { id },
+      data: { available: false },
+    });
   }
 }

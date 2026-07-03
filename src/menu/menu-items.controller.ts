@@ -8,7 +8,7 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Role } from '@prisma/client';
 import { Public } from '../auth/decorators/public.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -55,5 +55,15 @@ export class MenuItemsController {
   @Delete(':id')
   remove(@Param('id') id: string) {
     return this.menuItemsService.remove(id);
+  }
+
+  @ApiBearerAuth()
+  @Roles(Role.ADMIN)
+  @ApiOperation({
+    summary: 'Deactivate a product (soft delete — preserves order history)',
+  })
+  @Patch(':id/deactivate')
+  deactivate(@Param('id') id: string) {
+    return this.menuItemsService.deactivate(id);
   }
 }
