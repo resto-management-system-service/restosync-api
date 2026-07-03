@@ -4,6 +4,7 @@ import {
   IsInt,
   IsOptional,
   IsString,
+  IsUrl,
   IsUUID,
   Min,
   MinLength,
@@ -31,8 +32,12 @@ export class CreateMenuItemDto {
   @IsString()
   currency?: string;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({
+    description: 'Public URL of the product image',
+    example: 'https://example.com/images/ceviche.jpg',
+  })
   @IsOptional()
+  @IsUrl()
   @IsString()
   imageUrl?: string;
 
