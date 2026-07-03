@@ -38,6 +38,9 @@ export class MenuItemsController {
 
   @ApiBearerAuth()
   @Roles(Role.ADMIN)
+  @ApiOperation({
+    summary: 'Create a menu item (imageUrl is a public URL, no file upload)',
+  })
   @Post()
   create(@Body() dto: CreateMenuItemDto) {
     return this.menuItemsService.create(dto);
@@ -45,6 +48,9 @@ export class MenuItemsController {
 
   @ApiBearerAuth()
   @Roles(Role.ADMIN)
+  @ApiOperation({
+    summary: 'Update a menu item (imageUrl accepts a public URL)',
+  })
   @Patch(':id')
   update(@Param('id') id: string, @Body() dto: UpdateMenuItemDto) {
     return this.menuItemsService.update(id, dto);

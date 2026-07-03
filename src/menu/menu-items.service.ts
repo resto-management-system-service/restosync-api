@@ -12,6 +12,9 @@ import {
   UpdateMenuItemDto,
 } from './dto/menu-item.dto';
 
+// Image policy (MVP): URL-only. Admin provides a public image URL.
+// File upload (S3/Supabase Storage) is out of scope for MVP.
+// To remove an image, set imageUrl to null via PATCH.
 @Injectable()
 export class MenuItemsService {
   constructor(private readonly prisma: PrismaService) {}
