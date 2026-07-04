@@ -1,7 +1,7 @@
 {
   "name": "restosync-api",
   "version": "0.1.0",
-  "description": "NestJS REST API for restaurant management — menu, orders, payments",
+  "description": "NestJS REST API for restaurant management \u2014 menu, orders, payments",
   "author": "Carlos Sandoval Montoya",
   "private": true,
   "license": "UNLICENSED",
@@ -72,14 +72,49 @@
     "typescript": "^5.6.2"
   },
   "jest": {
-    "moduleFileExtensions": ["js", "json", "ts"],
+    "moduleFileExtensions": [
+      "js",
+      "json",
+      "ts"
+    ],
     "rootDir": "src",
     "testRegex": ".*\\.spec\\.ts$",
     "transform": {
       "^.+\\.(t|j)s$": "ts-jest"
     },
-    "collectCoverageFrom": ["**/*.(t|j)s"],
+    "collectCoverageFrom": [
+      "**/*.(t|j)s"
+    ],
     "coverageDirectory": "../coverage",
-    "testEnvironment": "node"
+    "testEnvironment": "node",
+    "coverageThreshold": {
+      "global": {
+        "lines": 0
+      },
+      "src/orders/": {
+        "lines": 31
+      },
+      "src/payments/": {
+        "lines": 24
+      },
+      "src/billing/": {
+        "lines": 73
+      },
+      "src/audit/": {
+        "lines": 66
+      },
+      "src/auth/": {
+        "lines": 0
+      },
+      "src/inventory/": {
+        "lines": 28
+      },
+      "src/reports/": {
+        "lines": 42
+      },
+      "src/cash-register/": {
+        "lines": 46
+      }
+    }
   }
 }

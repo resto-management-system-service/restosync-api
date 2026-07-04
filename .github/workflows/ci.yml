@@ -46,5 +46,5 @@ jobs:
       - run: npx prisma db seed
       - run: npm run lint
       - run: npm run build
-      - run: npm test
+      - run: npm run test:cov
       - run: npm run test:e2e
