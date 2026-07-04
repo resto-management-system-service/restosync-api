@@ -1,0 +1,127 @@
+name: Release
+
+# Triggers only after ci.yml ("Build & Test") completes on main.
+# This is NOT a push trigger, so the [skip ci] version-bump commit
+# pushed by the "tag" job below does not cause this workflow to
+# re-trigger itself: workflow_run only fires from a completed run of
+# the *watched* workflow ("Build & Test"), never from a new push. The
+# version-bump commit also carries [skip ci], which GitHub natively
+# honors for push/pull_request-triggered workflows, so ci.yml itself
+# is skipped for that commit too. No additional guard is needed.
+on:
+  workflow_run:
+    workflows: ["Build & Test"]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    name: Bump version & tag
+    # Mandatory: workflow_run fires regardless of the watched run's
+    # outcome, so without this check we would tag/deploy on a failed
+    # CI run.
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.bump.outputs.version }}
+      sha: ${{ steps.commit.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Compute next patch version
+        id: bump
+        run: |
+          set -euo pipefail
+
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          echo "package.json version: $PKG_VERSION"
+
+          HIGHEST_TAG=$(git tag -l 'v*' | sed 's/^v//' | sort -V | tail -n1)
+          echo "highest existing tag: ${HIGHEST_TAG:-none}"
+
+          if [ -z "$HIGHEST_TAG" ]; then
+            BASE_VERSION="$PKG_VERSION"
+          else
+            # Use whichever is higher between package.json and the
+            # highest existing git tag, in case they drifted apart.
+            BASE_VERSION=$(printf '%s\n%s\n' "$PKG_VERSION" "$HIGHEST_TAG" | sort -V | tail -n1)
+          fi
+          echo "base version: $BASE_VERSION"
+
+          # Align package.json with the base version first, so
+          # `npm version patch` bumps the correct segment even if
+          # package.json had drifted behind the highest tag.
+          npm pkg set version="$BASE_VERSION"
+          npm version patch --no-git-tag-version
+
+          NEXT_VERSION=$(node -p "require('./package.json').version")
+          echo "next version: v${NEXT_VERSION}"
+          echo "version=v${NEXT_VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Commit version bump and create tag
+        id: commit
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add package.json package-lock.json
+          git commit -m "chore(release): bump version to ${{ steps.bump.outputs.version }} [skip ci]"
+          git tag "${{ steps.bump.outputs.version }}"
+          git push origin HEAD:main
+          git push origin "${{ steps.bump.outputs.version }}"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build & push image
+    needs: tag
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.tag.outputs.sha }}
+
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1 # master
+
+      - name: Authenticate to registry.fly.io
+        run: flyctl auth docker
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+
+      - name: Build image
+        run: |
+          docker build -t registry.fly.io/restosync-api:${{ needs.tag.outputs.version }} .
+
+      - name: Push image
+        run: |
+          docker push registry.fly.io/restosync-api:${{ needs.tag.outputs.version }}
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+
+  deploy-dev:
+    name: Deploy to dev
+    needs: [tag, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.tag.outputs.sha }}
+
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1 # master
+
+      - run: >
+          flyctl deploy
+          --image registry.fly.io/restosync-api:${{ needs.tag.outputs.version }}
+          --app restosync-api-dev
+          --config infra/fly.dev.toml
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
