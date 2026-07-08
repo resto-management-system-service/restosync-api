@@ -1,5 +1,6 @@
-import { ApiProperty } from '@nestjs/swagger';
-import { IsDateString } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { IsDateString, IsInt, IsOptional, Min } from 'class-validator';
+import { Type } from 'class-transformer';
 
 export class DateQueryDto {
   @ApiProperty({
@@ -8,4 +9,14 @@ export class DateQueryDto {
   })
   @IsDateString()
   date!: string;
+
+  @ApiPropertyOptional({
+    example: 10,
+    description: 'Max number of results to return',
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Type(() => Number)
+  limit?: number;
 }
