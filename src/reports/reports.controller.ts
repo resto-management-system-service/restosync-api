@@ -41,11 +41,8 @@ export class ReportsController {
     status: 200,
     description: 'Top products by quantity sold',
   })
-  getBestSellingProducts(
-    @Query() query: DateQueryDto,
-    @Query('limit') limit?: number,
-  ) {
-    return this.reportsService.getBestSellingProducts(query.date, limit ?? 10);
+  getBestSellingProducts(@Query() query: DateQueryDto) {
+  return this.reportsService.getBestSellingProducts(query.date, query.limit ?? 10);
   }
 
   @Get('closed-tickets')
