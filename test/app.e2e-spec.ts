@@ -831,6 +831,143 @@ describe('RestoSync API (e2e)', () => {
     });
   });
 
+  describe('auto-decrement stock on sale (#51)', () => {
+    const INITIAL_STOCK = 10;
+    const ORDER_QTY = 3;
+    const ITEM_PRICE_CENTS = 900;
+
+    let adminToken: string;
+    let managerToken: string;
+    let cashierToken: string;
+    let menuItemId: string;
+    let inventoryItemId: string;
+    let orderId: string;
+
+    beforeAll(async () => {
+      const adminLogin = await request(app.getHttpServer())
+        .post('/api/auth/login')
+        .send({ email: 'admin@restosync.local', password: 'Admin123!' })
+        .expect(200);
+      adminToken = adminLogin.body.accessToken;
+
+      const managerLogin = await request(app.getHttpServer())
+        .post('/api/auth/login')
+        .send({ email: 'manager@restosync.local', password: 'Manager123!' })
+        .expect(200);
+      managerToken = managerLogin.body.accessToken;
+
+      const cashierLogin = await request(app.getHttpServer())
+        .post('/api/auth/login')
+        .send({ email: 'cashier@restosync.local', password: 'Cashier123!' })
+        .expect(200);
+      cashierToken = cashierLogin.body.accessToken;
+
+      const category = await request(app.getHttpServer())
+        .post('/api/menu/categories')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ name: `AutoDecrement_${Date.now()}` })
+        .expect(201);
+
+      const menuItem = await request(app.getHttpServer())
+        .post('/api/menu/items')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          name: `Tracked Item ${Date.now()}`,
+          priceCents: ITEM_PRICE_CENTS,
+          categoryId: category.body.id,
+        })
+        .expect(201);
+      menuItemId = menuItem.body.id;
+
+      const inventoryItem = await request(app.getHttpServer())
+        .post('/api/inventory')
+        .set('Authorization', `Bearer ${managerToken}`)
+        .send({
+          name: `Tracked Stock ${Date.now()}`,
+          unit: 'unit',
+          quantityOnHand: INITIAL_STOCK,
+          lowStockThreshold: 1,
+          menuItemId,
+        })
+        .expect(201);
+      inventoryItemId = inventoryItem.body.id;
+
+      // Clean up any register session left open by a previous test run.
+      await request(app.getHttpServer())
+        .post('/api/cash-register/close')
+        .set('Authorization', `Bearer ${cashierToken}`)
+        .send({ countedCents: 0 });
+
+      await request(app.getHttpServer())
+        .post('/api/cash-register/open')
+        .set('Authorization', `Bearer ${cashierToken}`)
+        .send({ openingFloatCents: 0 })
+        .expect(201);
+    });
+
+    it('creates and confirms an order for a menu item with linked inventory', async () => {
+      const order = await request(app.getHttpServer())
+        .post('/api/orders')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          type: 'DINE_IN',
+          table: 'INV1',
+          items: [{ menuItemId, quantity: ORDER_QTY }],
+        })
+        .expect(201);
+      orderId = order.body.id;
+
+      const confirmed = await request(app.getHttpServer())
+        .post(`/api/orders/${orderId}/confirm`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(201);
+      expect(confirmed.body.status).toBe('PENDING');
+    });
+
+    it('POST /api/payments/checkout decrements the linked inventory item', async () => {
+      await request(app.getHttpServer())
+        .post('/api/payments/checkout')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          orderId,
+          method: 'CASH',
+          amountPaidCents: ITEM_PRICE_CENTS * ORDER_QTY,
+        })
+        .expect(201);
+
+      const item = await request(app.getHttpServer())
+        .get(`/api/inventory/${inventoryItemId}`)
+        .set('Authorization', `Bearer ${managerToken}`)
+        .expect(200);
+
+      expect(item.body.quantityOnHand).toBe(INITIAL_STOCK - ORDER_QTY);
+
+      const saleAdjustment = item.body.adjustments.find(
+        (a: { type: string }) => a.type === 'SALE',
+      );
+      expect(saleAdjustment).toBeDefined();
+      expect(saleAdjustment.quantityDelta).toBe(-ORDER_QTY);
+      expect(saleAdjustment.reason).toMatch(/^Sale from order /);
+    });
+
+    afterAll(async () => {
+      await request(app.getHttpServer())
+        .post('/api/cash-register/close')
+        .set('Authorization', `Bearer ${cashierToken}`)
+        .send({ countedCents: ITEM_PRICE_CENTS * ORDER_QTY });
+
+      // Cleanup: delete the InventoryItem created for this suite so it
+      // never leaks into later tests/runs sharing this DB — in
+      // particular the "returns an empty array when no items qualify"
+      // low-stock assertion elsewhere in this file.
+      if (inventoryItemId) {
+        await request(app.getHttpServer())
+          .delete(`/api/inventory/${inventoryItemId}`)
+          .set('Authorization', `Bearer ${managerToken}`);
+      }
+    });
+  });
+
   describe('order discount audit trail', () => {
     let adminToken: string;
     let managerToken: string;
