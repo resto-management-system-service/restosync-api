@@ -1,5 +1,6 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { OrderStatus, PaymentMethod, PaymentStatus } from '@prisma/client';
+import { InventoryService } from '../inventory/inventory.service';
 import { OrdersService } from '../orders/orders.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { PaymentGateway } from './gateway/payment-gateway.interface';
@@ -13,6 +14,9 @@ type MockPrisma = {
     findFirst: jest.Mock;
   };
   payment: {
+    findFirst: jest.Mock;
+  };
+  inventoryItem: {
     findFirst: jest.Mock;
   };
   $transaction: jest.Mock;
@@ -29,6 +33,9 @@ function createMockPrisma(): MockPrisma {
     payment: {
       findFirst: jest.fn(),
     },
+    inventoryItem: {
+      findFirst: jest.fn(),
+    },
     $transaction: jest.fn(),
   };
 }
@@ -36,6 +43,7 @@ function createMockPrisma(): MockPrisma {
 describe('PaymentsService', () => {
   let service: PaymentsService;
   let prisma: MockPrisma;
+  let inventoryService: { adjust: jest.Mock };
   let txOrderUpdate: jest.Mock;
   let txPaymentCreate: jest.Mock;
 
@@ -45,9 +53,18 @@ describe('PaymentsService', () => {
 
   const baseOrder = {
     id: orderId,
+    number: 'ORD-001',
     status: OrderStatus.PENDING,
     totalCents: 1200,
     currency: 'usd',
+    items: [
+      {
+        id: 'item-1',
+        orderId,
+        menuItemId: 'menu-item-1',
+        quantity: 2,
+      },
+    ],
   };
 
   const activeSession = {
@@ -67,9 +84,12 @@ describe('PaymentsService', () => {
       }),
     );
 
+    inventoryService = { adjust: jest.fn().mockResolvedValue({}) };
+
     service = new PaymentsService(
       prisma as unknown as PrismaService,
       {} as unknown as OrdersService,
+      inventoryService as unknown as InventoryService,
       {} as unknown as PaymentGateway,
     );
   });
@@ -225,6 +245,71 @@ describe('PaymentsService', () => {
           }),
         }),
       );
+    });
+
+    describe('inventory decrement hook (#51)', () => {
+      it('decrements linked inventory by the correct quantity', async () => {
+        prisma.order.findUnique.mockResolvedValue(baseOrder);
+        prisma.cashRegisterSession.findFirst.mockResolvedValue(activeSession);
+        prisma.payment.findFirst.mockResolvedValue(null);
+        prisma.inventoryItem.findFirst.mockResolvedValue({
+          id: 'inv-item-1',
+          menuItemId: 'menu-item-1',
+        });
+
+        await service.checkout(
+          { orderId, method: PaymentMethod.CASH, amountPaidCents: 1200 },
+          actorId,
+        );
+
+        expect(prisma.inventoryItem.findFirst).toHaveBeenCalledWith({
+          where: { menuItemId: 'menu-item-1' },
+        });
+        expect(inventoryService.adjust).toHaveBeenCalledWith(
+          'inv-item-1',
+          {
+            type: 'SALE',
+            quantityDelta: -2,
+            reason: `Sale from order ${baseOrder.number}`,
+          },
+          actorId,
+        );
+      });
+
+      it('does not fail when an OrderItem has no linked InventoryItem', async () => {
+        prisma.order.findUnique.mockResolvedValue(baseOrder);
+        prisma.cashRegisterSession.findFirst.mockResolvedValue(activeSession);
+        prisma.payment.findFirst.mockResolvedValue(null);
+        prisma.inventoryItem.findFirst.mockResolvedValue(null);
+
+        await expect(
+          service.checkout(
+            { orderId, method: PaymentMethod.CASH, amountPaidCents: 1200 },
+            actorId,
+          ),
+        ).resolves.toBeDefined();
+
+        expect(inventoryService.adjust).not.toHaveBeenCalled();
+      });
+
+      it('does not fail even if the inventory decrement throws internally', async () => {
+        prisma.order.findUnique.mockResolvedValue(baseOrder);
+        prisma.cashRegisterSession.findFirst.mockResolvedValue(activeSession);
+        prisma.payment.findFirst.mockResolvedValue(null);
+        prisma.inventoryItem.findFirst.mockResolvedValue({
+          id: 'inv-item-1',
+          menuItemId: 'menu-item-1',
+        });
+        inventoryService.adjust.mockRejectedValue(new Error('boom'));
+
+        const result = await service.checkout(
+          { orderId, method: PaymentMethod.CASH, amountPaidCents: 1200 },
+          actorId,
+        );
+
+        expect(result).toEqual({ id: 'payment-1' });
+        expect(inventoryService.adjust).toHaveBeenCalled();
+      });
     });
   });
 });

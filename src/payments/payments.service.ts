@@ -11,6 +11,7 @@ import {
   PaymentStatus,
   Prisma,
 } from '@prisma/client';
+import { InventoryService } from '../inventory/inventory.service';
 import { canTransition } from '../orders/order-status';
 import { OrdersService } from '../orders/orders.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -21,6 +22,8 @@ import {
   PaymentGateway,
 } from './gateway/payment-gateway.interface';
 
+type OrderWithItems = Prisma.OrderGetPayload<{ include: { items: true } }>;
+
 @Injectable()
 export class PaymentsService {
   private readonly logger = new Logger(PaymentsService.name);
@@ -28,6 +31,7 @@ export class PaymentsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly orders: OrdersService,
+    private readonly inventoryService: InventoryService,
     @Inject(PAYMENT_GATEWAY) private readonly gateway: PaymentGateway,
   ) {}
 
@@ -78,6 +82,7 @@ export class PaymentsService {
   async checkout(dto: CheckoutDto, actorId: string) {
     const order = await this.prisma.order.findUnique({
       where: { id: dto.orderId },
+      include: { items: true },
     });
     if (!order) {
       throw new NotFoundException('Order not found');
@@ -115,7 +120,7 @@ export class PaymentsService {
 
     this.logger.debug(`Checkout for order ${order.id} by user ${actorId}`);
 
-    return this.prisma.$transaction(async (tx) => {
+    const payment = await this.prisma.$transaction(async (tx) => {
       if (!canTransition(order.status, OrderStatus.CONFIRMED)) {
         throw new BadRequestException(
           `Cannot transition order from ${order.status} to ${OrderStatus.CONFIRMED}`,
@@ -142,6 +147,49 @@ export class PaymentsService {
         include: { order: true },
       });
     });
+
+    // Best-effort, non-blocking: the sale is already confirmed and paid,
+    // so an inventory hiccup must never fail or roll back the checkout.
+    await this.decrementInventoryForOrder(order, actorId);
+
+    return payment;
+  }
+
+  // Optional hook (#51): decrements stock for any OrderItem linked to an
+  // InventoryItem via menuItemId. Items without a linked InventoryItem are
+  // silently skipped — that's the normal case, not an error. Any failure
+  // here is logged and swallowed so it never surfaces to the caller; this
+  // is an intentional exception to the "no try/catch for Prisma errors"
+  // rule, isolating a non-critical side effect from the critical payment
+  // flow.
+  private async decrementInventoryForOrder(
+    order: OrderWithItems,
+    actorId: string,
+  ) {
+    for (const item of order.items) {
+      try {
+        const inventoryItem = await this.prisma.inventoryItem.findFirst({
+          where: { menuItemId: item.menuItemId },
+        });
+        if (!inventoryItem) {
+          continue;
+        }
+
+        await this.inventoryService.adjust(
+          inventoryItem.id,
+          {
+            type: 'SALE',
+            quantityDelta: -item.quantity,
+            reason: `Sale from order ${order.number}`,
+          },
+          actorId,
+        );
+      } catch (err) {
+        this.logger.warn(
+          `Failed to decrement inventory for menuItemId ${item.menuItemId} on order ${order.number}: ${err}`,
+        );
+      }
+    }
   }
 
   async handleWebhook(payload: Buffer, signature: string) {

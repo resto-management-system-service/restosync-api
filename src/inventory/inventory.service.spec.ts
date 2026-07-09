@@ -187,6 +187,34 @@ describe('InventoryService', () => {
       });
     });
 
+    it('clamps quantityOnHand at 0 for a SALE adjustment exceeding stock', async () => {
+      prisma.inventoryItem.findUnique.mockResolvedValue({
+        id: itemId,
+        quantityOnHand: 3,
+      });
+
+      await service.adjust(
+        itemId,
+        { type: AdjustmentType.SALE, quantityDelta: -5 },
+        actorId,
+      );
+
+      expect(txInventoryItemUpdate).toHaveBeenCalledWith({
+        where: { id: itemId },
+        data: { quantityOnHand: 0 },
+        include: { adjustments: true, menuItem: true },
+      });
+      expect(txStockAdjustmentCreate).toHaveBeenCalledWith({
+        data: {
+          inventoryItemId: itemId,
+          type: AdjustmentType.SALE,
+          quantityDelta: -5,
+          reason: null,
+          performedById: actorId,
+        },
+      });
+    });
+
     it('creates a StockAdjustment record with type, delta, reason and actor', async () => {
       prisma.inventoryItem.findUnique.mockResolvedValue({
         id: itemId,
