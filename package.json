@@ -1,7 +1,7 @@
 {
   "name": "restosync-api",
-  "version": "0.1.0",
-  "description": "NestJS REST API for restaurant management \u2014 menu, orders, payments",
+  "version": "0.1.1",
+  "description": "NestJS REST API for restaurant management — menu, orders, payments",
   "author": "Carlos Sandoval Montoya",
   "private": true,
   "license": "UNLICENSED",
@@ -36,12 +36,12 @@
     "@nestjs/platform-express": "^10.4.4",
     "@nestjs/swagger": "^7.4.2",
     "@prisma/client": "^5.20.0",
-    "prisma": "^5.20.0",
     "bcryptjs": "^2.4.3",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.1",
     "passport": "^0.7.0",
     "passport-jwt": "^4.0.1",
+    "prisma": "^5.20.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
     "stripe": "^16.12.0"
