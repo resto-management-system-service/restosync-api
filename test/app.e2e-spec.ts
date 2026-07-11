@@ -657,6 +657,109 @@ describe('RestoSync API (e2e)', () => {
         .set('Authorization', `Bearer ${cashierToken}`)
         .expect(403);
     });
+
+    describe('CSV export (?format=csv)', () => {
+      it('GET /api/reports/daily-summary without format param is unchanged (JSON)', async () => {
+        const res = await request(app.getHttpServer())
+          .get('/api/reports/daily-summary')
+          .query({ date: today })
+          .set('Authorization', `Bearer ${managerToken}`)
+          .expect(200);
+
+        expect(res.headers['content-type']).toMatch(/json/);
+        expect(res.body.totalSalesCents).toBeDefined();
+      });
+
+      it('GET /api/reports/daily-summary?format=csv returns a CSV file', async () => {
+        const res = await request(app.getHttpServer())
+          .get('/api/reports/daily-summary')
+          .query({ date: today, format: 'csv' })
+          .set('Authorization', `Bearer ${managerToken}`)
+          .expect(200);
+
+        expect(res.headers['content-type']).toMatch(/text\/csv/);
+        expect(res.headers['content-disposition']).toMatch(
+          /attachment; filename="daily-summary-.*\.csv"/,
+        );
+
+        const lines = res.text.trim().split('\r\n');
+        expect(lines[0]).toBe('totalSalesCents,ticketCount,averageTicketCents');
+        expect(lines).toHaveLength(2);
+      });
+
+      it('GET /api/reports/payment-methods?format=csv flattens method/amountCents rows', async () => {
+        const res = await request(app.getHttpServer())
+          .get('/api/reports/payment-methods')
+          .query({ date: today, format: 'csv' })
+          .set('Authorization', `Bearer ${managerToken}`)
+          .expect(200);
+
+        expect(res.headers['content-type']).toMatch(/text\/csv/);
+        expect(res.headers['content-disposition']).toMatch(
+          /attachment; filename="payment-methods-.*\.csv"/,
+        );
+
+        const lines = res.text.trim().split('\r\n');
+        expect(lines[0]).toBe('method,amountCents');
+        expect(lines).toContain(
+          `CASH,${before.cashCents + PRODUCT_A_REVENUE_CENTS}`,
+        );
+        expect(lines).toContain(
+          `CARD,${before.cardCents + PRODUCT_B_REVENUE_CENTS}`,
+        );
+      });
+
+      it('GET /api/reports/best-selling?format=csv includes a row for productA', async () => {
+        const res = await request(app.getHttpServer())
+          .get('/api/reports/best-selling')
+          .query({ date: today, limit: 50, format: 'csv' })
+          .set('Authorization', `Bearer ${managerToken}`)
+          .expect(200);
+
+        expect(res.headers['content-type']).toMatch(/text\/csv/);
+        expect(res.headers['content-disposition']).toMatch(
+          /attachment; filename="best-selling-.*\.csv"/,
+        );
+
+        const lines = res.text.trim().split('\r\n');
+        expect(lines[0]).toBe('menuItemId,name,quantitySold,revenueCents');
+        const productARow = lines.find((line) => line.includes(productAName));
+        expect(productARow).toBeDefined();
+        expect(productARow).toBe(
+          `${productARow!.split(',')[0]},${productAName},${PRODUCT_A_QTY},${PRODUCT_A_REVENUE_CENTS}`,
+        );
+      });
+
+      it('GET /api/reports/payment-methods-range?format=csv is a flat method/amountCents CSV (not grouped by date)', async () => {
+        const res = await request(app.getHttpServer())
+          .get('/api/reports/payment-methods-range')
+          .query({ startDate: today, endDate: today, format: 'csv' })
+          .set('Authorization', `Bearer ${managerToken}`)
+          .expect(200);
+
+        expect(res.headers['content-type']).toMatch(/text\/csv/);
+        expect(res.headers['content-disposition']).toMatch(
+          /attachment; filename="payment-methods-range-.*\.csv"/,
+        );
+
+        const lines = res.text.trim().split('\r\n');
+        expect(lines[0]).toBe('method,amountCents');
+        expect(lines).toContain(
+          `CASH,${before.cashCents + PRODUCT_A_REVENUE_CENTS}`,
+        );
+        expect(lines).toContain(
+          `CARD,${before.cardCents + PRODUCT_B_REVENUE_CENTS}`,
+        );
+      });
+
+      it('rejects an invalid format value', async () => {
+        await request(app.getHttpServer())
+          .get('/api/reports/daily-summary')
+          .query({ date: today, format: 'xml' })
+          .set('Authorization', `Bearer ${managerToken}`)
+          .expect(400);
+      });
+    });
   });
 
   describe('inventory: adjustments + thresholds', () => {

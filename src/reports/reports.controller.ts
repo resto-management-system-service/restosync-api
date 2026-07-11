@@ -1,4 +1,4 @@
-import { Controller, Get, Query } from '@nestjs/common';
+import { Controller, Get, Query, Res } from '@nestjs/common';
 import {
   ApiBearerAuth,
   ApiOperation,
@@ -6,10 +6,33 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { Role } from '@prisma/client';
+import type { Response } from 'express';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { toCsv } from '../common/utils/csv';
 import { DateQueryDto } from './dto/date-query.dto';
 import { DateRangeQueryDto } from './dto/date-range-query.dto';
 import { ReportsService } from './reports.service';
+
+function flattenPaymentMethods(
+  byMethod: Record<string, number>,
+): { method: string; amountCents: number }[] {
+  return Object.entries(byMethod).map(([method, amountCents]) => ({
+    method,
+    amountCents,
+  }));
+}
+
+function sendCsv(
+  res: Response,
+  filename: string,
+  rows: Record<string, unknown>[],
+  columns?: string[],
+): void {
+  const csv = toCsv(rows, columns);
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.send(csv);
+}
 
 @ApiTags('reports')
 @ApiBearerAuth()
@@ -24,15 +47,42 @@ export class ReportsController {
     status: 200,
     description: 'Total sales, ticket count, average ticket',
   })
-  getDailySummary(@Query() query: DateQueryDto) {
-    return this.reportsService.getDailySummary(query.date);
+  async getDailySummary(
+    @Query() query: DateQueryDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const result = await this.reportsService.getDailySummary(query.date);
+
+    if (query.format === 'csv') {
+      sendCsv(res, `daily-summary-${query.date}.csv`, [result]);
+      return;
+    }
+
+    return result;
   }
 
   @Get('payment-methods')
   @ApiOperation({ summary: 'Sales breakdown by payment method' })
   @ApiResponse({ status: 200, description: 'Amount per payment method' })
-  getPaymentMethodBreakdown(@Query() query: DateQueryDto) {
-    return this.reportsService.getPaymentMethodBreakdown(query.date);
+  async getPaymentMethodBreakdown(
+    @Query() query: DateQueryDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const result = await this.reportsService.getPaymentMethodBreakdown(
+      query.date,
+    );
+
+    if (query.format === 'csv') {
+      sendCsv(
+        res,
+        `payment-methods-${query.date}.csv`,
+        flattenPaymentMethods(result),
+        ['method', 'amountCents'],
+      );
+      return;
+    }
+
+    return result;
   }
 
   @Get('best-selling')
@@ -41,15 +91,51 @@ export class ReportsController {
     status: 200,
     description: 'Top products by quantity sold',
   })
-  getBestSellingProducts(@Query() query: DateQueryDto) {
-  return this.reportsService.getBestSellingProducts(query.date, query.limit ?? 10);
+  async getBestSellingProducts(
+    @Query() query: DateQueryDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const result = await this.reportsService.getBestSellingProducts(
+      query.date,
+      query.limit ?? 10,
+    );
+
+    if (query.format === 'csv') {
+      sendCsv(res, `best-selling-${query.date}.csv`, result, [
+        'menuItemId',
+        'name',
+        'quantitySold',
+        'revenueCents',
+      ]);
+      return;
+    }
+
+    return result;
   }
 
   @Get('closed-tickets')
   @ApiOperation({ summary: 'Closed tickets in date range' })
   @ApiResponse({ status: 200, description: 'List of closed orders' })
-  getClosedTickets(@Query() query: DateRangeQueryDto) {
-    return this.reportsService.getClosedTickets(query.startDate, query.endDate);
+  async getClosedTickets(
+    @Query() query: DateRangeQueryDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const result = await this.reportsService.getClosedTickets(
+      query.startDate,
+      query.endDate,
+    );
+
+    if (query.format === 'csv') {
+      sendCsv(
+        res,
+        `closed-tickets-${query.startDate}_${query.endDate}.csv`,
+        result,
+        ['id', 'number', 'totalCents', 'status', 'createdAt', 'itemCount'],
+      );
+      return;
+    }
+
+    return result;
   }
 
   @Get('daily-summary-range')
@@ -58,21 +144,55 @@ export class ReportsController {
     status: 200,
     description: 'Array of daily sales summaries',
   })
-  getDailySummaryRange(@Query() query: DateRangeQueryDto) {
-    return this.reportsService.getDailySummaryRange(
+  async getDailySummaryRange(
+    @Query() query: DateRangeQueryDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const result = await this.reportsService.getDailySummaryRange(
       query.startDate,
       query.endDate,
     );
+
+    if (query.format === 'csv') {
+      sendCsv(
+        res,
+        `daily-summary-range-${query.startDate}_${query.endDate}.csv`,
+        result,
+        ['date', 'totalSalesCents', 'ticketCount', 'averageTicketCents'],
+      );
+      return;
+    }
+
+    return result;
   }
 
   @Get('payment-methods-range')
   @ApiOperation({ summary: 'Payment method breakdown for a date range' })
   @ApiResponse({ status: 200, description: 'Amount per payment method' })
-  getPaymentMethodBreakdownRange(@Query() query: DateRangeQueryDto) {
-    return this.reportsService.getPaymentMethodBreakdownRange(
+  async getPaymentMethodBreakdownRange(
+    @Query() query: DateRangeQueryDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const result = await this.reportsService.getPaymentMethodBreakdownRange(
       query.startDate,
       query.endDate,
     );
+
+    if (query.format === 'csv') {
+      // NOTE: getPaymentMethodBreakdownRange returns a flat
+      // Record<PaymentMethod, number> aggregated over the whole range
+      // (not grouped per-day) — verified in reports.service.ts. The
+      // flattening logic mirrors payment-methods exactly.
+      sendCsv(
+        res,
+        `payment-methods-range-${query.startDate}_${query.endDate}.csv`,
+        flattenPaymentMethods(result),
+        ['method', 'amountCents'],
+      );
+      return;
+    }
+
+    return result;
   }
 
   @Get('tickets-by-day')
@@ -81,10 +201,25 @@ export class ReportsController {
     status: 200,
     description: 'Array of daily ticket counts',
   })
-  getTicketCountByDay(@Query() query: DateRangeQueryDto) {
-    return this.reportsService.getTicketCountByDay(
+  async getTicketCountByDay(
+    @Query() query: DateRangeQueryDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const result = await this.reportsService.getTicketCountByDay(
       query.startDate,
       query.endDate,
     );
+
+    if (query.format === 'csv') {
+      sendCsv(
+        res,
+        `tickets-by-day-${query.startDate}_${query.endDate}.csv`,
+        result,
+        ['date', 'ticketCount'],
+      );
+      return;
+    }
+
+    return result;
   }
 }

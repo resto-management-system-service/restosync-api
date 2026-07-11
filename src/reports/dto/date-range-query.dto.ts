@@ -1,5 +1,5 @@
-import { ApiProperty } from '@nestjs/swagger';
-import { IsDateString } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { IsDateString, IsIn, IsOptional } from 'class-validator';
 
 export class DateRangeQueryDto {
   @ApiProperty({
@@ -15,4 +15,9 @@ export class DateRangeQueryDto {
   })
   @IsDateString()
   endDate!: string;
+
+  @ApiPropertyOptional({ enum: ['json', 'csv'], default: 'json' })
+  @IsOptional()
+  @IsIn(['json', 'csv'])
+  format?: 'json' | 'csv';
 }
