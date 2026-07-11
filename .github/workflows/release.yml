@@ -111,6 +111,10 @@ jobs:
     name: Deploy to dev
     needs: [tag, build]
     runs-on: ubuntu-latest
+    # TEMPORARY: disabled until restosync-api-dev + restosync-db-dev
+    # are provisioned in Fly.io (blocked on org infra decision — see #73).
+    # Re-enable by removing this line once dev infra exists.
+    if: false    
     steps:
       - uses: actions/checkout@v4
         with:
