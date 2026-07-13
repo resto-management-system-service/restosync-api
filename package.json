@@ -1,6 +1,6 @@
 {
   "name": "restosync-api",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "NestJS REST API for restaurant management — menu, orders, payments",
   "author": "Carlos Sandoval Montoya",
   "private": true,
