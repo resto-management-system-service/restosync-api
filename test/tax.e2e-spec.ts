@@ -64,12 +64,18 @@ describe('Configurable tax strategy (e2e)', () => {
       })
       .expect(201);
 
+    const table = await request(app.getHttpServer())
+      .post('/api/tables')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ name: `TX1_${Date.now()}` })
+      .expect(201);
+
     const order = await request(app.getHttpServer())
       .post('/api/orders')
       .set('Authorization', `Bearer ${adminToken}`)
       .send({
         type: 'DINE_IN',
-        table: 'TX1',
+        tableId: table.body.id,
         items: [{ menuItemId: item.body.id, quantity: 2 }],
       })
       .expect(201);

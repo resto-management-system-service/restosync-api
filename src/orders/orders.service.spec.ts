@@ -1,6 +1,6 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { OrderStatus, OrderType } from '@prisma/client';
+import { OrderStatus, OrderType, TableStatus } from '@prisma/client';
 import { OrdersService } from './orders.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
@@ -8,6 +8,7 @@ import { AuditService } from '../audit/audit.service';
 type MockPrisma = {
   order: {
     findUnique: jest.Mock;
+    findFirst: jest.Mock;
     update: jest.Mock;
   };
   orderItem: {
@@ -19,13 +20,20 @@ type MockPrisma = {
   };
   menuItem: {
     findUnique: jest.Mock;
+    findMany: jest.Mock;
   };
+  table: {
+    findUnique: jest.Mock;
+    update: jest.Mock;
+  };
+  $transaction: jest.Mock;
 };
 
 function createMockPrisma(): MockPrisma {
   return {
     order: {
       findUnique: jest.fn(),
+      findFirst: jest.fn(),
       update: jest.fn(),
     },
     orderItem: {
@@ -37,7 +45,13 @@ function createMockPrisma(): MockPrisma {
     },
     menuItem: {
       findUnique: jest.fn(),
+      findMany: jest.fn(),
     },
+    table: {
+      findUnique: jest.fn(),
+      update: jest.fn(),
+    },
+    $transaction: jest.fn(),
   };
 }
 
@@ -103,6 +117,93 @@ describe('OrdersService', () => {
       auditService as unknown as AuditService,
       config as unknown as ConfigService,
     );
+  });
+
+  describe('create', () => {
+    const tableId = 'table-1';
+    let txOrderCreate: jest.Mock;
+    let txTableUpdate: jest.Mock;
+
+    beforeEach(() => {
+      txOrderCreate = jest.fn().mockResolvedValue({
+        id: orderId,
+        status: OrderStatus.DRAFT,
+      });
+      txTableUpdate = jest.fn().mockResolvedValue({});
+      prisma.$transaction.mockImplementation(async (callback) =>
+        callback({
+          order: { create: txOrderCreate },
+          table: { update: txTableUpdate },
+        }),
+      );
+      prisma.menuItem.findMany.mockResolvedValue([availableMenuItem]);
+      prisma.orderItem.findMany.mockResolvedValue([
+        { priceCents: 1200, quantity: 1 },
+      ]);
+      prisma.order.update.mockResolvedValue({
+        ...baseOrder,
+        subtotalCents: 1200,
+        taxCents: 0,
+        totalCents: 1200,
+      });
+    });
+
+    const dto = {
+      type: OrderType.DINE_IN,
+      tableId: 'table-1',
+      items: [{ menuItemId, quantity: 1 }],
+    };
+
+    it('creates a new order and sets the table OCCUPIED when the table is AVAILABLE', async () => {
+      prisma.table.findUnique.mockResolvedValue({
+        id: tableId,
+        status: TableStatus.AVAILABLE,
+      });
+
+      const result = await service.create(dto as any, 'user-1');
+
+      expect(prisma.table.findUnique).toHaveBeenCalledWith({
+        where: { id: tableId },
+      });
+      expect(txOrderCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ tableId }),
+        }),
+      );
+      expect(txTableUpdate).toHaveBeenCalledWith({
+        where: { id: tableId },
+        data: { status: TableStatus.OCCUPIED },
+      });
+      expect(result.totalCents).toBe(1200);
+    });
+
+    it('returns the existing active order instead of creating a duplicate when the table is OCCUPIED', async () => {
+      prisma.table.findUnique.mockResolvedValue({
+        id: tableId,
+        status: TableStatus.OCCUPIED,
+      });
+      const existingOrder = {
+        id: 'existing-order',
+        status: OrderStatus.PENDING,
+        tableId,
+      };
+      prisma.order.findFirst.mockResolvedValue(existingOrder);
+
+      const result = await service.create(dto as any, 'user-1');
+
+      expect(result).toBe(existingOrder);
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+      expect(txOrderCreate).not.toHaveBeenCalled();
+    });
+
+    it('throws NotFoundException for a nonexistent tableId', async () => {
+      prisma.table.findUnique.mockResolvedValue(null);
+
+      await expect(service.create(dto as any, 'user-1')).rejects.toThrow(
+        NotFoundException,
+      );
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
   });
 
   describe('addItem', () => {

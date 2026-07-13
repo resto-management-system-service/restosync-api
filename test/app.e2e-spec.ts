@@ -79,6 +79,7 @@ describe('RestoSync API (e2e)', () => {
     let friesId: string;
     let orderId: string;
     let orderItemId: string;
+    let tableId: string;
 
     beforeAll(async () => {
       const login = await request(app.getHttpServer())
@@ -115,6 +116,13 @@ describe('RestoSync API (e2e)', () => {
         })
         .expect(201);
       friesId = fries.body.id;
+
+      const table = await request(app.getHttpServer())
+        .post('/api/tables')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ name: `T1_${Date.now()}` })
+        .expect(201);
+      tableId = table.body.id;
     });
 
     it('POST /api/orders creates an order in DRAFT status', async () => {
@@ -123,7 +131,7 @@ describe('RestoSync API (e2e)', () => {
         .set('Authorization', `Bearer ${adminToken}`)
         .send({
           type: 'DINE_IN',
-          table: 'T1',
+          tableId,
           items: [{ menuItemId: burgerId, quantity: 1 }],
         })
         .expect(201);
@@ -223,6 +231,7 @@ describe('RestoSync API (e2e)', () => {
     let burgerId: string;
     let orderId: string;
     let sessionId: string;
+    let tableId: string;
 
     beforeAll(async () => {
       const cashierLogin = await request(app.getHttpServer())
@@ -260,6 +269,13 @@ describe('RestoSync API (e2e)', () => {
         })
         .expect(201);
       burgerId = burger.body.id;
+
+      const table = await request(app.getHttpServer())
+        .post('/api/tables')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ name: `C1_${Date.now()}` })
+        .expect(201);
+      tableId = table.body.id;
     });
 
     it('POST /api/cash-register/open opens a session with the float', async () => {
@@ -288,7 +304,7 @@ describe('RestoSync API (e2e)', () => {
         .set('Authorization', `Bearer ${adminToken}`)
         .send({
           type: 'DINE_IN',
-          table: 'C1',
+          tableId,
           items: [{ menuItemId: burgerId, quantity: 1 }],
         })
         .expect(201);
@@ -332,6 +348,12 @@ describe('RestoSync API (e2e)', () => {
       expect(res.body.changeCents).toBe(300);
       expect(res.body.order.status).toBe('CONFIRMED');
       expect(res.body.id).toBeDefined();
+
+      const table = await request(app.getHttpServer())
+        .get(`/api/tables/${tableId}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200);
+      expect(table.body.status).toBe('AVAILABLE');
     });
 
     // NOTE: checkout() validates `order.status === PENDING` before checking
@@ -510,6 +532,20 @@ describe('RestoSync API (e2e)', () => {
         .expect(201);
       const productBId = productB.body.id;
 
+      const tableA = await request(app.getHttpServer())
+        .post('/api/tables')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ name: `R1_${Date.now()}` })
+        .expect(201);
+      const tableAId = tableA.body.id;
+
+      const tableB = await request(app.getHttpServer())
+        .post('/api/tables')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ name: `R2_${Date.now()}` })
+        .expect(201);
+      const tableBId = tableB.body.id;
+
       // Clean up any register session left open by a previous test run.
       await request(app.getHttpServer())
         .post('/api/cash-register/close')
@@ -528,7 +564,7 @@ describe('RestoSync API (e2e)', () => {
         .set('Authorization', `Bearer ${adminToken}`)
         .send({
           type: 'DINE_IN',
-          table: 'R1',
+          tableId: tableAId,
           items: [{ menuItemId: productAId, quantity: PRODUCT_A_QTY }],
         })
         .expect(201);
@@ -557,7 +593,7 @@ describe('RestoSync API (e2e)', () => {
         .set('Authorization', `Bearer ${adminToken}`)
         .send({
           type: 'DINE_IN',
-          table: 'R2',
+          tableId: tableBId,
           items: [{ menuItemId: productBId, quantity: PRODUCT_B_QTY }],
         })
         .expect(201);
@@ -945,6 +981,7 @@ describe('RestoSync API (e2e)', () => {
     let menuItemId: string;
     let inventoryItemId: string;
     let orderId: string;
+    let tableId: string;
 
     beforeAll(async () => {
       const adminLogin = await request(app.getHttpServer())
@@ -995,6 +1032,13 @@ describe('RestoSync API (e2e)', () => {
         .expect(201);
       inventoryItemId = inventoryItem.body.id;
 
+      const table = await request(app.getHttpServer())
+        .post('/api/tables')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ name: `INV1_${Date.now()}` })
+        .expect(201);
+      tableId = table.body.id;
+
       // Clean up any register session left open by a previous test run.
       await request(app.getHttpServer())
         .post('/api/cash-register/close')
@@ -1014,7 +1058,7 @@ describe('RestoSync API (e2e)', () => {
         .set('Authorization', `Bearer ${adminToken}`)
         .send({
           type: 'DINE_IN',
-          table: 'INV1',
+          tableId,
           items: [{ menuItemId, quantity: ORDER_QTY }],
         })
         .expect(201);
@@ -1116,12 +1160,19 @@ describe('RestoSync API (e2e)', () => {
         .expect(201);
       burgerId = burger.body.id;
 
+      const table = await request(app.getHttpServer())
+        .post('/api/tables')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ name: `A1_${Date.now()}` })
+        .expect(201);
+      const tableId = table.body.id;
+
       const order = await request(app.getHttpServer())
         .post('/api/orders')
         .set('Authorization', `Bearer ${cashierToken}`)
         .send({
           type: 'DINE_IN',
-          table: 'A1',
+          tableId,
           items: [{ menuItemId: burgerId, quantity: 1 }],
         })
         .expect(201);
