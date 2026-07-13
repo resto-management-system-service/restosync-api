@@ -1,5 +1,10 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
-import { OrderStatus, PaymentMethod, PaymentStatus } from '@prisma/client';
+import {
+  OrderStatus,
+  PaymentMethod,
+  PaymentStatus,
+  TableStatus,
+} from '@prisma/client';
 import { InventoryService } from '../inventory/inventory.service';
 import { OrdersService } from '../orders/orders.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -19,6 +24,9 @@ type MockPrisma = {
   inventoryItem: {
     findFirst: jest.Mock;
   };
+  table: {
+    update: jest.Mock;
+  };
   $transaction: jest.Mock;
 };
 
@@ -36,6 +44,9 @@ function createMockPrisma(): MockPrisma {
     inventoryItem: {
       findFirst: jest.fn(),
     },
+    table: {
+      update: jest.fn(),
+    },
     $transaction: jest.fn(),
   };
 }
@@ -46,6 +57,7 @@ describe('PaymentsService', () => {
   let inventoryService: { adjust: jest.Mock };
   let txOrderUpdate: jest.Mock;
   let txPaymentCreate: jest.Mock;
+  let txTableUpdate: jest.Mock;
 
   const orderId = 'order-1';
   const sessionId = 'session-1';
@@ -76,11 +88,13 @@ describe('PaymentsService', () => {
     prisma = createMockPrisma();
     txOrderUpdate = jest.fn().mockResolvedValue({});
     txPaymentCreate = jest.fn().mockResolvedValue({ id: 'payment-1' });
+    txTableUpdate = jest.fn().mockResolvedValue({});
 
     prisma.$transaction.mockImplementation(async (callback) =>
       callback({
         order: { update: txOrderUpdate },
         payment: { create: txPaymentCreate },
+        table: { update: txTableUpdate },
       }),
     );
 
@@ -127,6 +141,44 @@ describe('PaymentsService', () => {
           }),
         }),
       );
+    });
+
+    it('sets the table back to AVAILABLE after successful payment', async () => {
+      const orderWithTable = { ...baseOrder, tableId: 'table-1' };
+      prisma.order.findUnique.mockResolvedValue(orderWithTable);
+      prisma.cashRegisterSession.findFirst.mockResolvedValue(activeSession);
+      prisma.payment.findFirst.mockResolvedValue(null);
+
+      await service.checkout(
+        {
+          orderId,
+          method: PaymentMethod.CASH,
+          amountPaidCents: 1200,
+        },
+        actorId,
+      );
+
+      expect(txTableUpdate).toHaveBeenCalledWith({
+        where: { id: 'table-1' },
+        data: { status: TableStatus.AVAILABLE },
+      });
+    });
+
+    it('does not attempt to release a table for orders without a tableId', async () => {
+      prisma.order.findUnique.mockResolvedValue(baseOrder);
+      prisma.cashRegisterSession.findFirst.mockResolvedValue(activeSession);
+      prisma.payment.findFirst.mockResolvedValue(null);
+
+      await service.checkout(
+        {
+          orderId,
+          method: PaymentMethod.CASH,
+          amountPaidCents: 1200,
+        },
+        actorId,
+      );
+
+      expect(txTableUpdate).not.toHaveBeenCalled();
     });
 
     it('computes changeCents correctly (amountPaid - total)', async () => {

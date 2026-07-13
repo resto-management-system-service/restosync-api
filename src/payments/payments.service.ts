@@ -10,6 +10,7 @@ import {
   PaymentMethod,
   PaymentStatus,
   Prisma,
+  TableStatus,
 } from '@prisma/client';
 import { InventoryService } from '../inventory/inventory.service';
 import { canTransition } from '../orders/order-status';
@@ -130,6 +131,16 @@ export class PaymentsService {
         where: { id: order.id },
         data: { status: OrderStatus.CONFIRMED },
       });
+
+      // Releasing the table is a core correctness concern (part of the
+      // critical payment path), not an optional side effect like the
+      // inventory hook below — it must NOT be swallowed on failure.
+      if (order.tableId) {
+        await tx.table.update({
+          where: { id: order.tableId },
+          data: { status: TableStatus.AVAILABLE },
+        });
+      }
 
       return tx.payment.create({
         data: {

@@ -134,6 +134,18 @@ async function main() {
     });
   }
 
+  // ─── Demo tables ───────────────────────────────────────────────
+
+  const demoTable = await prisma.table.upsert({
+    where: { id: '55555555-5555-4555-8555-555555555501' },
+    update: { name: 'Mesa 1', capacity: 4 },
+    create: {
+      id: '55555555-5555-4555-8555-555555555501',
+      name: 'Mesa 1',
+      capacity: 4,
+    },
+  });
+
   // ─── Demo orders ───────────────────────────────────────────────
 
   const menuLookup = new Map(menuItems.map((m) => [m.name, m]));
@@ -143,7 +155,7 @@ async function main() {
       number: 'DEMO-001',
       type: OrderType.DINE_IN,
       status: OrderStatus.DRAFT,
-      table: 'Mesa 1',
+      tableId: demoTable.id as string | null,
       items: [
         { name: 'Ceviche Clásico', quantity: 2 },
         { name: 'Chicha Morada', quantity: 1 },
@@ -153,7 +165,7 @@ async function main() {
       number: 'DEMO-002',
       type: OrderType.TAKEAWAY,
       status: OrderStatus.DRAFT,
-      table: null as string | null,
+      tableId: null as string | null,
       items: [
         { name: 'Lomo Saltado', quantity: 1 },
         { name: 'Inca Kola', quantity: 2 },
@@ -170,12 +182,12 @@ async function main() {
 
     const order = await prisma.order.upsert({
       where: { number: demo.number },
-      update: { type: demo.type, status: demo.status, table: demo.table },
+      update: { type: demo.type, status: demo.status, tableId: demo.tableId },
       create: {
         number: demo.number,
         type: demo.type,
         status: demo.status,
-        table: demo.table,
+        tableId: demo.tableId,
         customerId: admin.id,
       },
     });

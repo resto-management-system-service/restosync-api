@@ -19,33 +19,33 @@ enum Role {
 }
 
 model User {
-  id           String    @id @default(uuid())
-  email        String    @unique
-  passwordHash String
-  firstName    String?
-  lastName     String?
-  role         Role      @default(CUSTOMER)
-  active       Boolean   @default(true)
+  id               String                @id @default(uuid())
+  email            String                @unique
+  passwordHash     String
+  firstName        String?
+  lastName         String?
+  role             Role                  @default(CUSTOMER)
+  active           Boolean               @default(true)
   orders           Order[]
   openedSessions   CashRegisterSession[] @relation("OpenedSessions")
   closedSessions   CashRegisterSession[] @relation("ClosedSessions")
   stockAdjustments StockAdjustment[]
   sessions         Session[]
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  createdAt        DateTime              @default(now())
+  updatedAt        DateTime              @updatedAt
 
   @@map("users")
 }
 
 // Persisted refresh-token sessions (one row per issued refresh token).
 model Session {
-  id           String   @id @default(uuid())
-  userId       String
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  refreshHash  String
-  expiresAt    DateTime
-  revokedAt    DateTime?
-  createdAt    DateTime @default(now())
+  id          String    @id @default(uuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  refreshHash String
+  expiresAt   DateTime
+  revokedAt   DateTime?
+  createdAt   DateTime  @default(now())
 
   @@index([userId])
   @@map("sessions")
@@ -66,19 +66,19 @@ model Category {
 }
 
 model MenuItem {
-  id          String      @id @default(uuid())
-  name        String
-  description String?
-  priceCents  Int
-  currency    String      @default("usd")
-  imageUrl    String?
-  available   Boolean     @default(true)
-  categoryId  String
-  category    Category    @relation(fields: [categoryId], references: [id], onDelete: Restrict)
-  orderItems  OrderItem[]
-  inventoryItem  InventoryItem?
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
+  id            String         @id @default(uuid())
+  name          String
+  description   String?
+  priceCents    Int
+  currency      String         @default("usd")
+  imageUrl      String?
+  available     Boolean        @default(true)
+  categoryId    String
+  category      Category       @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  orderItems    OrderItem[]
+  inventoryItem InventoryItem?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
 
   @@index([categoryId])
   @@map("menu_items")
@@ -106,47 +106,66 @@ enum OrderStatus {
   CANCELLED
 }
 
+enum TableStatus {
+  AVAILABLE
+  OCCUPIED
+}
+
+model Table {
+  id        String      @id @default(uuid())
+  name      String      @unique
+  capacity  Int?
+  status    TableStatus @default(AVAILABLE)
+  orders    Order[]
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+
+  @@map("tables")
+}
+
 model Order {
-  id           String      @id @default(uuid())
-  number       String      @unique
-  customerId   String?
-  customer     User?       @relation(fields: [customerId], references: [id], onDelete: SetNull)
-  type         OrderType   @default(DINE_IN)
-  status       OrderStatus @default(DRAFT)
-  table        String?
-  subtotalCents Int        @default(0)
-  taxCents     Int         @default(0)
-  totalCents   Int         @default(0)
-  discountCents Int        @default(0)
-  discountType  DiscountType @default(FIXED)
+  id                String       @id @default(uuid())
+  number            String       @unique
+  customerId        String?
+  customer          User?        @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  type              OrderType    @default(DINE_IN)
+  status            OrderStatus  @default(DRAFT)
+  tableId           String?
+  tableRef          Table?       @relation(fields: [tableId], references: [id])
+  subtotalCents     Int          @default(0)
+  taxCents          Int          @default(0)
+  totalCents        Int          @default(0)
+  discountCents     Int          @default(0)
+  discountType      DiscountType @default(FIXED)
   discountPercent   Int?
   discountAppliedBy String?
   discountAppliedAt DateTime?
   discountReason    String?
-  currency     String      @default("usd")
-  notes        String?
-  items        OrderItem[]
-  payments     Payment[]
-  createdAt    DateTime    @default(now())
-  updatedAt    DateTime    @updatedAt
+  currency          String       @default("usd")
+  notes             String?
+  items             OrderItem[]
+  payments          Payment[]
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
 
   @@index([customerId])
   @@index([status])
+  @@index([tableId])
   @@map("orders")
 }
 
 model OrderItem {
-  id            String   @id @default(uuid())
-  orderId       String
-  order         Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  menuItemId    String
-  menuItem      MenuItem @relation(fields: [menuItemId], references: [id], onDelete: Restrict)
+  id             String   @id @default(uuid())
+  orderId        String
+  order          Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  menuItemId     String
+  menuItem       MenuItem @relation(fields: [menuItemId], references: [id], onDelete: Restrict)
   // Snapshot of menu item at order time — prices must not change retroactively.
-  nameSnapshot  String
-  priceCents    Int
-  quantity      Int
-  modifiers     Json?
-  notes         String?
+  nameSnapshot   String
+  priceCents     Int
+  quantity       Int
+  modifiers      Json?
+  notes          String?
   lineTotalCents Int
 
   @@index([orderId])
@@ -171,23 +190,23 @@ enum PaymentStatus {
 }
 
 model Payment {
-  id            String        @id @default(uuid())
-  orderId       String
-  order         Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  method        PaymentMethod @default(CASH)
-  provider      String        @default("stripe")
-  providerRef   String?       @unique // Stripe PaymentIntent id (null for CASH/CARD/TRANSFER)
-  amountCents   Int
-  paidCents      Int           @default(0) // amount physically received
-  changeCents    Int           @default(0) // change given back to customer
-  currency      String        @default("usd")
-  status        PaymentStatus @default(REQUIRES_PAYMENT)
-  lastEventId   String? // last processed webhook event id (idempotency)
-  sessionId      String?
-  session        CashRegisterSession? @relation(fields: [sessionId], references: [id])
-  rawEvent        Json?
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
+  id          String               @id @default(uuid())
+  orderId     String
+  order       Order                @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  method      PaymentMethod        @default(CASH)
+  provider    String               @default("stripe")
+  providerRef String?              @unique // Stripe PaymentIntent id (null for CASH/CARD/TRANSFER)
+  amountCents Int
+  paidCents   Int                  @default(0) // amount physically received
+  changeCents Int                  @default(0) // change given back to customer
+  currency    String               @default("usd")
+  status      PaymentStatus        @default(REQUIRES_PAYMENT)
+  lastEventId String? // last processed webhook event id (idempotency)
+  sessionId   String?
+  session     CashRegisterSession? @relation(fields: [sessionId], references: [id])
+  rawEvent    Json?
+  createdAt   DateTime             @default(now())
+  updatedAt   DateTime             @updatedAt
 
   @@index([orderId])
   @@map("payments")
@@ -204,9 +223,9 @@ model CashRegisterSession {
   closedBy          User?     @relation("ClosedSessions", fields: [closedById], references: [id])
   closedAt          DateTime?
   openingFloatCents Int       @default(0)
-  expectedCents     Int?      // computed from sales at close
-  countedCents      Int?      // physically counted by cashier
-  differenceCents   Int?      // countedCents - expectedCents
+  expectedCents     Int? // computed from sales at close
+  countedCents      Int? // physically counted by cashier
+  differenceCents   Int? // countedCents - expectedCents
   notes             String?
   payments          Payment[]
   createdAt         DateTime  @default(now())

@@ -5,7 +5,14 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { DiscountType, OrderStatus, Prisma, Role } from '@prisma/client';
+import {
+  DiscountType,
+  OrderStatus,
+  OrderType,
+  Prisma,
+  Role,
+  TableStatus,
+} from '@prisma/client';
 import { randomBytes } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import {
@@ -27,6 +34,11 @@ const EDITABLE_STATUSES: OrderStatus[] = [
 
 const orderInclude = { items: true } satisfies Prisma.OrderInclude;
 
+const ACTIVE_ORDER_STATUSES: OrderStatus[] = Object.values(OrderStatus).filter(
+  (status) =>
+    status !== OrderStatus.COMPLETED && status !== OrderStatus.CANCELLED,
+);
+
 @Injectable()
 export class OrdersService {
   constructor(
@@ -36,6 +48,26 @@ export class OrdersService {
   ) {}
 
   async create(dto: CreateOrderDto, customerId?: string) {
+    let table: { id: string; status: TableStatus } | null = null;
+    if (dto.type === OrderType.DINE_IN) {
+      table = await this.prisma.table.findUnique({
+        where: { id: dto.tableId },
+      });
+      if (!table) {
+        throw new NotFoundException('Table not found');
+      }
+      if (table.status === TableStatus.OCCUPIED) {
+        const activeOrder = await this.prisma.order.findFirst({
+          where: { tableId: table.id, status: { in: ACTIVE_ORDER_STATUSES } },
+          include: orderInclude,
+          orderBy: { createdAt: 'desc' },
+        });
+        if (activeOrder) {
+          return activeOrder;
+        }
+      }
+    }
+
     const itemIds = dto.items.map((i) => i.menuItemId);
     const menuItems = await this.prisma.menuItem.findMany({
       where: { id: { in: itemIds } },
@@ -66,21 +98,32 @@ export class OrdersService {
       };
     });
 
-    const order = await this.prisma.order.create({
-      data: {
-        number: this.generateOrderNumber(),
-        customerId: customerId ?? null,
-        type: dto.type,
-        table: dto.table,
-        status: OrderStatus.DRAFT,
-        subtotalCents: 0,
-        taxCents: 0,
-        totalCents: 0,
-        currency,
-        notes: dto.notes,
-        items: { create: orderItems },
-      },
-      include: orderInclude,
+    const order = await this.prisma.$transaction(async (tx) => {
+      const created = await tx.order.create({
+        data: {
+          number: this.generateOrderNumber(),
+          customerId: customerId ?? null,
+          type: dto.type,
+          tableId: table?.id ?? null,
+          status: OrderStatus.DRAFT,
+          subtotalCents: 0,
+          taxCents: 0,
+          totalCents: 0,
+          currency,
+          notes: dto.notes,
+          items: { create: orderItems },
+        },
+        include: orderInclude,
+      });
+
+      if (table) {
+        await tx.table.update({
+          where: { id: table.id },
+          data: { status: TableStatus.OCCUPIED },
+        });
+      }
+
+      return created;
     });
 
     return this.recalculateTotals(order.id);

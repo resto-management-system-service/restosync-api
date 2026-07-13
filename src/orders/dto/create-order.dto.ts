@@ -45,11 +45,11 @@ export class CreateOrderDto {
   @IsEnum(OrderType)
   type!: OrderType;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ format: 'uuid' })
   @ValidateIf((o) => o.type === OrderType.DINE_IN)
-  @IsString()
-  @IsNotEmpty({ message: 'table is required for dine-in orders' })
-  table?: string;
+  @IsUUID(undefined, { message: 'tableId must be a valid UUID' })
+  @IsNotEmpty({ message: 'tableId is required for dine-in orders' })
+  tableId?: string;
 
   @ApiProperty({ type: [OrderLineDto] })
   @IsArray()
