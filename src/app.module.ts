@@ -15,6 +15,7 @@ import { OrdersModule } from './orders/orders.module';
 import { PaymentsModule } from './payments/payments.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { ReportsModule } from './reports/reports.module';
+import { ReservationsModule } from './reservations/reservations.module';
 import { TablesModule } from './tables/tables.module';
 import { UsersModule } from './users/users.module';
 
@@ -36,6 +37,7 @@ import { UsersModule } from './users/users.module';
     InventoryModule,
     BillingModule,
     TablesModule,
+    ReservationsModule,
   ],
   controllers: [AppController],
   providers: [

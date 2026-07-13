@@ -24,4 +24,11 @@ export default () => ({
     // 0) in development/test.
     rate: parseFloat(process.env.TAX_RATE || '0'),
   },
+  reservations: {
+    // Fixed deposit amount (in cents) for DEPOSIT_ONLY reservations.
+    // Unlike TAX_RATE, an unconfigured deposit has low risk (no legal
+    // consequences), so this is optional with a sensible default rather
+    // than fail-fast-in-production — see env.validation.ts.
+    depositCents: parseInt(process.env.RESERVATION_DEPOSIT_CENTS || '1000', 10),
+  },
 });
