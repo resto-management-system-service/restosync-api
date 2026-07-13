@@ -64,6 +64,15 @@ class EnvironmentVariables {
   @Min(0, { message: 'TAX_RATE must be between 0 and 1' })
   @Max(1, { message: 'TAX_RATE must be between 0 and 1' })
   TAX_RATE?: string;
+
+  // Fixed deposit amount (in cents) for DEPOSIT_ONLY reservations. Whenever
+  // provided, must be a non-negative integer. Unlike TAX_RATE, a missing
+  // value has no legal consequences, so it's simply @IsOptional() with a
+  // default applied in configuration.ts — no fail-fast-in-production
+  // behavior needed here.
+  @IsOptional()
+  @IsNumberString()
+  RESERVATION_DEPOSIT_CENTS?: string;
 }
 
 export function validateEnv(config: Record<string, unknown>) {
