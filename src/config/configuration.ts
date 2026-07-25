@@ -31,4 +31,13 @@ export default () => ({
     // than fail-fast-in-production — see env.validation.ts.
     depositCents: parseInt(process.env.RESERVATION_DEPOSIT_CENTS || '1000', 10),
   },
+  restaurant: {
+    // IANA timezone used to interpret Reservation.reservedFor as entered
+    // by staff (naive, local wall-clock string — see
+    // CreateReservationDto.reservedFor) and to display it back. Like
+    // RESERVATION_DEPOSIT_CENTS, an unconfigured value has no legal
+    // consequences, so it's optional with a sensible default rather than
+    // fail-fast-in-production — see env.validation.ts.
+    timezone: process.env.RESTAURANT_TIMEZONE || 'America/Lima',
+  },
 });

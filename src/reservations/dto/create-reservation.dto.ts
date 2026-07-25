@@ -4,7 +4,6 @@ import { Type } from 'class-transformer';
 import {
   ArrayMinSize,
   IsArray,
-  IsDateString,
   IsEmail,
   IsEnum,
   IsInt,
@@ -12,6 +11,7 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  Matches,
   Min,
   ValidateIf,
   ValidateNested,
@@ -39,8 +39,26 @@ export class CreateReservationDto {
   @Min(1)
   partySize!: number;
 
-  @ApiProperty({ description: 'Date/time the customer is expected' })
-  @IsDateString()
+  // A naive local datetime string (no 'Z'/offset suffix), interpreted as
+  // wall-clock time in the restaurant's configured timezone (see
+  // config/configuration.ts: restaurant.timezone). Rejecting UTC-suffixed
+  // values is deliberate — accepting both local-naive AND UTC-suffixed
+  // input ambiguously is exactly the bug this validation fixes (staff
+  // filling in local wall-clock values that were silently misinterpreted
+  // as UTC).
+  @ApiProperty({
+    description:
+      "Date/time the customer is expected, as the restaurant's local " +
+      'wall-clock time with NO timezone suffix (e.g. ' +
+      '"2026-07-18T14:00:00") — do not include Z or an offset.',
+    example: '2026-07-18T14:00:00',
+  })
+  @Matches(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$/, {
+    message:
+      'reservedFor must be a local time without timezone suffix (e.g. ' +
+      '"2026-07-18T14:00:00"), representing the restaurant\'s local time ' +
+      '— do not include Z or an offset',
+  })
   reservedFor!: string;
 
   // Fully optional and freely editable by staff — if omitted, the service

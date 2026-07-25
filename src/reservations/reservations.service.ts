@@ -15,6 +15,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateOrderDto } from '../orders/dto/create-order.dto';
 import { OrdersService } from '../orders/orders.service';
+import { localToUtc, utcToLocalDisplay } from '../common/utils/local-time';
 import { CreateReservationDto } from './dto/create-reservation.dto';
 import { ListReservationsQueryDto } from './dto/list-reservations-query.dto';
 import { SeatReservationDto } from './dto/seat-reservation.dto';
@@ -53,9 +54,10 @@ export class ReservationsService {
           'tableId and items are not allowed for INFORMAL reservations',
         );
       }
-      return this.prisma.reservation.create({
+      const reservation = await this.prisma.reservation.create({
         data: this.baseReservationData(dto, actorId),
       });
+      return this.withReservedForLocal(reservation);
     }
 
     // WITH_PREORDER and DEPOSIT_ONLY both commit a specific table once the
@@ -95,7 +97,7 @@ export class ReservationsService {
         this.config.get<number>('reservations.depositCents') ?? 1000;
     }
 
-    return this.prisma.reservation.create({
+    const reservation = await this.prisma.reservation.create({
       data: {
         ...this.baseReservationData(dto, actorId),
         tableId: dto.tableId,
@@ -103,6 +105,7 @@ export class ReservationsService {
         depositCents,
       },
     });
+    return this.withReservedForLocal(reservation);
   }
 
   async findAll(query: ListReservationsQueryDto) {
@@ -116,12 +119,15 @@ export class ReservationsService {
       where.reservedFor = { gte: start, lt: end };
     }
 
-    return this.prisma.reservation.findMany({
+    const reservations = await this.prisma.reservation.findMany({
       where,
       skip: query.skip,
       take: query.limit,
       orderBy: { reservedFor: 'asc' },
     });
+    return reservations.map((reservation) =>
+      this.withReservedForLocal(reservation),
+    );
   }
 
   async findOne(id: string) {
@@ -131,7 +137,7 @@ export class ReservationsService {
     if (!reservation) {
       throw new NotFoundException('Reservation not found');
     }
-    return reservation;
+    return this.withReservedForLocal(reservation);
   }
 
   async confirm(id: string, actorId: string) {
@@ -143,16 +149,17 @@ export class ReservationsService {
     }
 
     if (reservation.reservationType === ReservationType.INFORMAL) {
-      return this.prisma.reservation.update({
+      const updated = await this.prisma.reservation.update({
         where: { id },
         data: { status: ReservationStatus.CONFIRMED },
       });
+      return this.withReservedForLocal(updated);
     }
 
     // WITH_PREORDER / DEPOSIT_ONLY: the deposit has just been confirmed
     // received by staff — this is the moment the table is actually
     // committed (AVAILABLE -> RESERVED).
-    return this.prisma.$transaction(async (tx) => {
+    const updated = await this.prisma.$transaction(async (tx) => {
       if (reservation.tableId) {
         await tx.table.update({
           where: { id: reservation.tableId },
@@ -168,6 +175,7 @@ export class ReservationsService {
         },
       });
     });
+    return this.withReservedForLocal(updated);
   }
 
   async seat(id: string, dto: SeatReservationDto, actorId: string) {
@@ -323,7 +331,7 @@ export class ReservationsService {
       );
     }
 
-    return this.prisma.$transaction(async (tx) => {
+    const updated = await this.prisma.$transaction(async (tx) => {
       if (reservation.tableId) {
         const table = await tx.table.findUnique({
           where: { id: reservation.tableId },
@@ -340,6 +348,7 @@ export class ReservationsService {
         data: { status: nextStatus },
       });
     });
+    return this.withReservedForLocal(updated);
   }
 
   private baseReservationData(
@@ -351,7 +360,12 @@ export class ReservationsService {
       customerPhone: dto.customerPhone,
       customerEmail: dto.customerEmail,
       partySize: dto.partySize,
-      reservedFor: new Date(dto.reservedFor),
+      // dto.reservedFor is a naive local wall-clock string (validated by
+      // CreateReservationDto to reject any Z/offset suffix) — convert it
+      // to UTC using the restaurant's configured timezone before
+      // persisting, so it lands on the correct absolute instant regardless
+      // of the DB's UTC storage.
+      reservedFor: localToUtc(dto.reservedFor, this.getTimezone()),
       toleranceMinutes:
         dto.toleranceMinutes ?? DEFAULT_TOLERANCE_BY_TYPE[dto.reservationType],
       allergies: dto.allergies,
@@ -359,6 +373,24 @@ export class ReservationsService {
       reservationType: dto.reservationType,
       status: ReservationStatus.PENDING,
       createdBy: actorId,
+    };
+  }
+
+  private getTimezone(): string {
+    return this.config.get<string>('restaurant.timezone') ?? 'America/Lima';
+  }
+
+  // Derived, display-only convenience — NOT persisted. Formats the stored
+  // UTC reservedFor back into the restaurant's local timezone.
+  private withReservedForLocal<T extends { reservedFor: Date }>(
+    reservation: T,
+  ): T & { reservedForLocal: string } {
+    return {
+      ...reservation,
+      reservedForLocal: utcToLocalDisplay(
+        reservation.reservedFor,
+        this.getTimezone(),
+      ),
     };
   }
 }
