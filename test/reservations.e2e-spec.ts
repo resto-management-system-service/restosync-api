@@ -102,11 +102,26 @@ describe('Reservations (e2e)', () => {
           customerName: 'Jane Doe',
           customerPhone: '+51999999999',
           partySize: 2,
-          reservedFor: '2026-08-01T20:00:00.000Z',
+          reservedFor: '2026-08-01T14:00:00',
           reservationType: 'DEPOSIT_ONLY',
           tableId,
         })
         .expect(403);
+    });
+
+    it('POST /api/reservations rejects a reservedFor value with a UTC (Z) suffix', async () => {
+      await request(app.getHttpServer())
+        .post('/api/reservations')
+        .set('Authorization', `Bearer ${cashierToken}`)
+        .send({
+          customerName: 'Jane Doe',
+          customerPhone: '+51999999999',
+          partySize: 2,
+          reservedFor: '2026-08-01T14:00:00.000Z',
+          reservationType: 'DEPOSIT_ONLY',
+          tableId,
+        })
+        .expect(400);
     });
 
     it('POST /api/reservations creates a PENDING DEPOSIT_ONLY reservation with the configured fixed deposit', async () => {
@@ -117,7 +132,7 @@ describe('Reservations (e2e)', () => {
           customerName: 'Jane Doe',
           customerPhone: '+51999999999',
           partySize: 2,
-          reservedFor: '2026-08-01T20:00:00.000Z',
+          reservedFor: '2026-08-01T14:00:00',
           reservationType: 'DEPOSIT_ONLY',
           tableId,
         })
@@ -126,6 +141,12 @@ describe('Reservations (e2e)', () => {
       expect(res.body.status).toBe('PENDING');
       expect(res.body.depositCents).toBe(DEPOSIT_CENTS);
       expect(res.body.orderId).toBeNull();
+      // reservedFor was sent as a naive local time ("14:00", no suffix),
+      // interpreted as America/Lima (UTC-5, default RESTAURANT_TIMEZONE)
+      // — stored/returned reservedFor must be the correctly shifted UTC
+      // instant, with reservedForLocal reflecting the original local time.
+      expect(res.body.reservedFor).toBe('2026-08-01T19:00:00.000Z');
+      expect(res.body.reservedForLocal).toBe('2026-08-01T14:00:00');
       reservationId = res.body.id;
 
       // Table is NOT committed yet — stays AVAILABLE until deposit confirmed.
@@ -295,7 +316,7 @@ describe('Reservations (e2e)', () => {
           customerName: 'Informal Guest',
           customerPhone: '+51988888888',
           partySize: 3,
-          reservedFor: '2026-08-02T19:00:00.000Z',
+          reservedFor: '2026-08-02T10:00:00',
           reservationType: 'INFORMAL',
           tableId: '00000000-0000-4000-8000-000000000000',
         })
@@ -310,7 +331,7 @@ describe('Reservations (e2e)', () => {
           customerName: 'Informal Guest',
           customerPhone: '+51988888888',
           partySize: 3,
-          reservedFor: '2026-08-02T19:00:00.000Z',
+          reservedFor: '2026-08-02T10:00:00',
           reservationType: 'INFORMAL',
         })
         .expect(201);
@@ -385,7 +406,7 @@ describe('Reservations (e2e)', () => {
           customerName: 'No Show Guest',
           customerPhone: '+51977777777',
           partySize: 2,
-          reservedFor: '2026-08-03T19:00:00.000Z',
+          reservedFor: '2026-08-03T10:00:00',
           reservationType: 'DEPOSIT_ONLY',
           tableId: table.body.id,
         })
@@ -429,7 +450,7 @@ describe('Reservations (e2e)', () => {
           customerName: 'Terminal Guest',
           customerPhone: '+51966666666',
           partySize: 2,
-          reservedFor: '2026-08-04T19:00:00.000Z',
+          reservedFor: '2026-08-04T10:00:00',
           reservationType: 'DEPOSIT_ONLY',
           tableId: table.body.id,
         })

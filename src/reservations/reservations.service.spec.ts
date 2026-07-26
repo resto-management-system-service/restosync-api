@@ -91,9 +91,11 @@ describe('ReservationsService', () => {
       applyDiscount: jest.fn(),
     };
     config = {
-      get: jest.fn((key: string) =>
-        key === 'reservations.depositCents' ? 1000 : undefined,
-      ),
+      get: jest.fn((key: string) => {
+        if (key === 'reservations.depositCents') return 1000;
+        if (key === 'restaurant.timezone') return 'America/Lima';
+        return undefined;
+      }),
     };
     service = new ReservationsService(
       prisma as unknown as PrismaService,
@@ -107,8 +109,27 @@ describe('ReservationsService', () => {
       customerName: 'Jane Doe',
       customerPhone: '+51999999999',
       partySize: 4,
-      reservedFor: '2026-08-01T20:00:00.000Z',
+      reservedFor: '2026-08-01T20:00:00',
     };
+
+    it('converts the naive local reservedFor to the correctly UTC-shifted value and attaches reservedForLocal', async () => {
+      prisma.reservation.create.mockImplementation(({ data }) =>
+        Promise.resolve({ id: reservationId, ...data }),
+      );
+
+      const dto = {
+        ...baseDto,
+        reservedFor: '2026-08-01T14:00:00',
+        reservationType: ReservationType.INFORMAL,
+      };
+
+      const result = await service.create(dto as any, actorId);
+
+      expect(config.get).toHaveBeenCalledWith('restaurant.timezone');
+      // America/Lima is fixed UTC-5 — 14:00 local -> 19:00 UTC.
+      expect(result.reservedFor.toISOString()).toBe('2026-08-01T19:00:00.000Z');
+      expect(result.reservedForLocal).toBe('2026-08-01T14:00:00');
+    });
 
     it('WITH_PREORDER: computes depositCents as floor(order.totalCents / 2) and creates the pre-order via OrdersService', async () => {
       prisma.table.findUnique.mockResolvedValue(availableTable);

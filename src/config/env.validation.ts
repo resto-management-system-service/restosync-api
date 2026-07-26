@@ -73,6 +73,15 @@ class EnvironmentVariables {
   @IsOptional()
   @IsNumberString()
   RESERVATION_DEPOSIT_CENTS?: string;
+
+  // IANA timezone (e.g. "America/Lima", "Europe/Madrid") used to interpret
+  // Reservation.reservedFor. Whenever provided, must be a string. Like
+  // RESERVATION_DEPOSIT_CENTS, a missing value has no legal consequences,
+  // so it's simply @IsOptional() with a default applied in
+  // configuration.ts — no fail-fast-in-production behavior needed here.
+  @IsOptional()
+  @IsString()
+  RESTAURANT_TIMEZONE?: string;
 }
 
 export function validateEnv(config: Record<string, unknown>) {
