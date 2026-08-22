@@ -4,8 +4,8 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PaymentMethod, PaymentStatus } from '@prisma/client';
+import { AuthUser } from '../auth/decorators/current-user.decorator';
 import { PrismaService } from '../prisma/prisma.service';
-import { DEFAULT_RESTAURANT_ID } from '../common/constants/tenancy';
 import { CloseSessionDto } from './dto/close-session.dto';
 import { OpenSessionDto } from './dto/open-session.dto';
 
@@ -13,9 +13,9 @@ import { OpenSessionDto } from './dto/open-session.dto';
 export class CashRegisterService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async openSession(dto: OpenSessionDto, actorId: string) {
+  async openSession(dto: OpenSessionDto, user: AuthUser) {
     const active = await this.prisma.cashRegisterSession.findFirst({
-      where: { closedAt: null },
+      where: { closedAt: null, restaurantId: user.restaurantId },
     });
     if (active) {
       throw new BadRequestException('A register session is already open');
@@ -23,17 +23,17 @@ export class CashRegisterService {
 
     return this.prisma.cashRegisterSession.create({
       data: {
-        openedById: actorId,
+        openedById: user.id,
         openingFloatCents: dto.openingFloatCents,
         notes: dto.notes ?? null,
-        restaurantId: DEFAULT_RESTAURANT_ID,
+        restaurantId: user.restaurantId,
       },
     });
   }
 
-  async closeSession(dto: CloseSessionDto, actorId: string) {
+  async closeSession(dto: CloseSessionDto, user: AuthUser) {
     const session = await this.prisma.cashRegisterSession.findFirst({
-      where: { closedAt: null },
+      where: { closedAt: null, restaurantId: user.restaurantId },
       orderBy: { openedAt: 'desc' },
     });
     if (!session) {
@@ -45,6 +45,7 @@ export class CashRegisterService {
       where: {
         sessionId: session.id,
         status: PaymentStatus.SUCCEEDED,
+        restaurantId: user.restaurantId,
       },
     });
     const expectedCents = paymentsAgg._sum.amountCents ?? 0;
@@ -53,7 +54,7 @@ export class CashRegisterService {
     return this.prisma.cashRegisterSession.update({
       where: { id: session.id },
       data: {
-        closedById: actorId,
+        closedById: user.id,
         closedAt: new Date(),
         expectedCents,
         countedCents: dto.countedCents,
@@ -63,16 +64,20 @@ export class CashRegisterService {
     });
   }
 
-  async getSessionSummary(sessionId: string) {
+  async getSessionSummary(sessionId: string, user: AuthUser) {
     const session = await this.prisma.cashRegisterSession.findUnique({
       where: { id: sessionId },
     });
-    if (!session) {
+    if (!session || session.restaurantId !== user.restaurantId) {
       throw new NotFoundException('Session not found');
     }
 
     const payments = await this.prisma.payment.findMany({
-      where: { sessionId, status: PaymentStatus.SUCCEEDED },
+      where: {
+        sessionId,
+        status: PaymentStatus.SUCCEEDED,
+        restaurantId: user.restaurantId,
+      },
     });
 
     const totalSalesCents = payments.reduce((sum, p) => sum + p.amountCents, 0);
@@ -97,15 +102,15 @@ export class CashRegisterService {
     };
   }
 
-  async getCurrentSummary() {
+  async getCurrentSummary(user: AuthUser) {
     const session = await this.prisma.cashRegisterSession.findFirst({
-      where: { closedAt: null },
+      where: { closedAt: null, restaurantId: user.restaurantId },
       orderBy: { openedAt: 'desc' },
     });
     if (!session) {
       throw new NotFoundException('No active session');
     }
 
-    return this.getSessionSummary(session.id);
+    return this.getSessionSummary(session.id, user);
   }
 }

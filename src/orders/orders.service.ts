@@ -20,7 +20,6 @@ import {
   paginate,
   PaginationQueryDto,
 } from '../common/dto/pagination-query.dto';
-import { DEFAULT_RESTAURANT_ID } from '../common/constants/tenancy';
 import { AuthUser } from '../auth/decorators/current-user.decorator';
 import { AuditService } from '../audit/audit.service';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
@@ -53,18 +52,26 @@ export class OrdersService {
     private readonly realtimeGateway: RealtimeGateway,
   ) {}
 
-  async create(dto: CreateOrderDto, customerId?: string) {
+  // restaurantId is passed explicitly (rather than a full AuthUser)
+  // because this is also called internally by ReservationsService on
+  // behalf of an already-verified reservation/table, not only directly
+  // from an authenticated HTTP request.
+  async create(dto: CreateOrderDto, restaurantId: string, customerId?: string) {
     let table: { id: string; status: TableStatus } | null = null;
     if (dto.type === OrderType.DINE_IN) {
-      table = await this.prisma.table.findUnique({
-        where: { id: dto.tableId },
+      table = await this.prisma.table.findFirst({
+        where: { id: dto.tableId, restaurantId },
       });
       if (!table) {
         throw new NotFoundException('Table not found');
       }
       if (table.status === TableStatus.OCCUPIED) {
         const activeOrder = await this.prisma.order.findFirst({
-          where: { tableId: table.id, status: { in: ACTIVE_ORDER_STATUSES } },
+          where: {
+            tableId: table.id,
+            status: { in: ACTIVE_ORDER_STATUSES },
+            restaurantId,
+          },
           include: orderInclude,
           orderBy: { createdAt: 'desc' },
         });
@@ -76,7 +83,7 @@ export class OrdersService {
 
     const itemIds = dto.items.map((i) => i.menuItemId);
     const menuItems = await this.prisma.menuItem.findMany({
-      where: { id: { in: itemIds } },
+      where: { id: { in: itemIds }, restaurantId },
     });
     const byId = new Map(menuItems.map((m) => [m.id, m]));
 
@@ -117,11 +124,11 @@ export class OrdersService {
           totalCents: 0,
           currency,
           notes: dto.notes,
-          restaurantId: DEFAULT_RESTAURANT_ID,
+          restaurantId,
           items: {
             create: orderItems.map((item) => ({
               ...item,
-              restaurantId: DEFAULT_RESTAURANT_ID,
+              restaurantId,
             })),
           },
         },
@@ -138,12 +145,14 @@ export class OrdersService {
       return created;
     });
 
-    return this.recalculateTotals(order.id);
+    return this.recalculateTotals(order.id, restaurantId);
   }
 
   async findAll(query: PaginationQueryDto, user: AuthUser) {
-    const where: Prisma.OrderWhereInput =
-      user.role === Role.CUSTOMER ? { customerId: user.id } : {};
+    const where: Prisma.OrderWhereInput = {
+      restaurantId: user.restaurantId,
+      ...(user.role === Role.CUSTOMER ? { customerId: user.id } : {}),
+    };
 
     const [data, total] = await this.prisma.$transaction([
       this.prisma.order.findMany({
@@ -163,7 +172,7 @@ export class OrdersService {
       where: { id },
       include: orderInclude,
     });
-    if (!order) {
+    if (!order || order.restaurantId !== user.restaurantId) {
       throw new NotFoundException('Order not found');
     }
     if (user.role === Role.CUSTOMER && order.customerId !== user.id) {
@@ -172,17 +181,20 @@ export class OrdersService {
     return order;
   }
 
-  async findOpen() {
+  async findOpen(user: AuthUser) {
     return this.prisma.order.findMany({
-      where: { status: { in: [OrderStatus.DRAFT, OrderStatus.PENDING] } },
+      where: {
+        restaurantId: user.restaurantId,
+        status: { in: [OrderStatus.DRAFT, OrderStatus.PENDING] },
+      },
       include: orderInclude,
       orderBy: { createdAt: 'asc' },
     });
   }
 
-  async updateStatus(id: string, next: OrderStatus) {
+  async updateStatus(id: string, next: OrderStatus, user: AuthUser) {
     const order = await this.prisma.order.findUnique({ where: { id } });
-    if (!order) {
+    if (!order || order.restaurantId !== user.restaurantId) {
       throw new NotFoundException('Order not found');
     }
     if (!canTransition(order.status, next)) {
@@ -208,6 +220,11 @@ export class OrdersService {
     return updated;
   }
 
+  // System-initiated (Stripe webhook confirms payment), not a user-facing
+  // request — there is no caller AuthUser/restaurantId to scope by here.
+  // The order is already uniquely resolved via the Payment's providerRef
+  // before this is called (see PaymentsService.onPaymentSucceeded), so no
+  // additional tenant check applies.
   async markConfirmed(id: string) {
     const order = await this.prisma.order.findUnique({ where: { id } });
     if (!order || !canTransition(order.status, OrderStatus.CONFIRMED)) {
@@ -219,11 +236,11 @@ export class OrdersService {
     });
   }
 
-  async addItem(orderId: string, dto: AddOrderItemDto) {
+  async addItem(orderId: string, dto: AddOrderItemDto, user: AuthUser) {
     const order = await this.prisma.order.findUnique({
       where: { id: orderId },
     });
-    if (!order) {
+    if (!order || order.restaurantId !== user.restaurantId) {
       throw new NotFoundException('Order not found');
     }
     if (!EDITABLE_STATUSES.includes(order.status)) {
@@ -232,8 +249,8 @@ export class OrdersService {
       );
     }
 
-    const menuItem = await this.prisma.menuItem.findUnique({
-      where: { id: dto.menuItemId },
+    const menuItem = await this.prisma.menuItem.findFirst({
+      where: { id: dto.menuItemId, restaurantId: user.restaurantId },
     });
     if (!menuItem || !menuItem.available) {
       throw new NotFoundException('Menu item not found or not available');
@@ -251,22 +268,23 @@ export class OrdersService {
         modifiers: (dto.modifiers ?? null) as Prisma.InputJsonValue,
         notes: dto.notes,
         lineTotalCents,
-        restaurantId: DEFAULT_RESTAURANT_ID,
+        restaurantId: user.restaurantId,
       },
     });
 
-    return this.recalculateTotals(orderId);
+    return this.recalculateTotals(orderId, user.restaurantId);
   }
 
   async updateItemQuantity(
     orderId: string,
     orderItemId: string,
     dto: UpdateOrderItemDto,
+    user: AuthUser,
   ) {
     const order = await this.prisma.order.findUnique({
       where: { id: orderId },
     });
-    if (!order) {
+    if (!order || order.restaurantId !== user.restaurantId) {
       throw new NotFoundException('Order not found');
     }
     if (!EDITABLE_STATUSES.includes(order.status)) {
@@ -276,7 +294,7 @@ export class OrdersService {
     }
 
     const orderItem = await this.prisma.orderItem.findFirst({
-      where: { id: orderItemId, orderId },
+      where: { id: orderItemId, orderId, restaurantId: user.restaurantId },
     });
     if (!orderItem) {
       throw new NotFoundException('Order item not found');
@@ -298,14 +316,14 @@ export class OrdersService {
       data: updateData,
     });
 
-    return this.recalculateTotals(orderId);
+    return this.recalculateTotals(orderId, user.restaurantId);
   }
 
-  async removeItem(orderId: string, orderItemId: string) {
+  async removeItem(orderId: string, orderItemId: string, user: AuthUser) {
     const order = await this.prisma.order.findUnique({
       where: { id: orderId },
     });
-    if (!order) {
+    if (!order || order.restaurantId !== user.restaurantId) {
       throw new NotFoundException('Order not found');
     }
     if (!EDITABLE_STATUSES.includes(order.status)) {
@@ -315,7 +333,7 @@ export class OrdersService {
     }
 
     const orderItem = await this.prisma.orderItem.findFirst({
-      where: { id: orderItemId, orderId },
+      where: { id: orderItemId, orderId, restaurantId: user.restaurantId },
     });
     if (!orderItem) {
       throw new NotFoundException('Order item not found');
@@ -323,15 +341,15 @@ export class OrdersService {
 
     await this.prisma.orderItem.delete({ where: { id: orderItemId } });
 
-    return this.recalculateTotals(orderId);
+    return this.recalculateTotals(orderId, user.restaurantId);
   }
 
-  async confirmOrder(orderId: string) {
+  async confirmOrder(orderId: string, user: AuthUser) {
     const order = await this.prisma.order.findUnique({
       where: { id: orderId },
       include: orderInclude,
     });
-    if (!order) {
+    if (!order || order.restaurantId !== user.restaurantId) {
       throw new NotFoundException('Order not found');
     }
     if (order.items.length === 0) {
@@ -350,12 +368,14 @@ export class OrdersService {
     });
   }
 
-  private async recalculateTotals(orderId: string) {
+  private async recalculateTotals(orderId: string, restaurantId: string) {
     const order = await this.prisma.order.findUnique({
       where: { id: orderId },
       select: { discountCents: true },
     });
-    const items = await this.prisma.orderItem.findMany({ where: { orderId } });
+    const items = await this.prisma.orderItem.findMany({
+      where: { orderId, restaurantId },
+    });
     const subtotalCents = items.reduce(
       (sum, item) => sum + item.priceCents * item.quantity,
       0,
@@ -386,15 +406,11 @@ export class OrdersService {
     return updated;
   }
 
-  async applyDiscount(
-    orderId: string,
-    dto: ApplyDiscountDto,
-    appliedByUserId: string,
-  ) {
+  async applyDiscount(orderId: string, dto: ApplyDiscountDto, user: AuthUser) {
     const order = await this.prisma.order.findUnique({
       where: { id: orderId },
     });
-    if (!order) {
+    if (!order || order.restaurantId !== user.restaurantId) {
       throw new NotFoundException('Order not found');
     }
     if (!EDITABLE_STATUSES.includes(order.status)) {
@@ -404,7 +420,7 @@ export class OrdersService {
     }
 
     const items = await this.prisma.orderItem.findMany({
-      where: { orderId },
+      where: { orderId, restaurantId: user.restaurantId },
     });
     const subtotalCents = items.reduce(
       (sum, item) => sum + item.priceCents * item.quantity,
@@ -429,7 +445,7 @@ export class OrdersService {
           dto.discountType === DiscountType.PERCENTAGE
             ? dto.discountPercent
             : null,
-        discountAppliedBy: appliedByUserId,
+        discountAppliedBy: user.id,
         discountAppliedAt: new Date(),
         discountReason: dto.reason ?? null,
       },
@@ -439,7 +455,8 @@ export class OrdersService {
       entityType: 'Order',
       entityId: orderId,
       action: 'DISCOUNT_APPLIED',
-      userId: appliedByUserId,
+      userId: user.id,
+      restaurantId: user.restaurantId,
       metadata: {
         discountType: dto.discountType,
         discountCents: resolvedDiscountCents,
@@ -451,7 +468,7 @@ export class OrdersService {
       },
     });
 
-    return this.recalculateTotals(orderId);
+    return this.recalculateTotals(orderId, user.restaurantId);
   }
 
   private generateOrderNumber(): string {

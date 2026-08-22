@@ -10,6 +10,10 @@ import {
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Role } from '@prisma/client';
+import {
+  AuthUser,
+  CurrentUser,
+} from '../auth/decorators/current-user.decorator';
 import { Public } from '../auth/decorators/public.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import {
@@ -45,8 +49,8 @@ export class MenuItemsController {
     summary: 'Create a menu item (imageUrl is a public URL, no file upload)',
   })
   @Post()
-  create(@Body() dto: CreateMenuItemDto) {
-    return this.menuItemsService.create(dto);
+  create(@Body() dto: CreateMenuItemDto, @CurrentUser() user: AuthUser) {
+    return this.menuItemsService.create(dto, user);
   }
 
   @ApiBearerAuth()
@@ -55,15 +59,19 @@ export class MenuItemsController {
     summary: 'Associate a public image URL with a product',
   })
   @Patch(':id')
-  update(@Param('id') id: string, @Body() dto: UpdateMenuItemDto) {
-    return this.menuItemsService.update(id, dto);
+  update(
+    @Param('id') id: string,
+    @Body() dto: UpdateMenuItemDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.menuItemsService.update(id, dto, user);
   }
 
   @ApiBearerAuth()
   @Roles(Role.ADMIN)
   @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.menuItemsService.remove(id);
+  remove(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+    return this.menuItemsService.remove(id, user);
   }
 
   @ApiBearerAuth()
@@ -72,7 +80,7 @@ export class MenuItemsController {
     summary: 'Deactivate a product (soft delete — preserves order history)',
   })
   @Patch(':id/deactivate')
-  deactivate(@Param('id') id: string) {
-    return this.menuItemsService.deactivate(id);
+  deactivate(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+    return this.menuItemsService.deactivate(id, user);
   }
 }

@@ -1,7 +1,7 @@
 import { NotFoundException } from '@nestjs/common';
-import { AdjustmentType } from '@prisma/client';
+import { AdjustmentType, Role } from '@prisma/client';
+import { AuthUser } from '../auth/decorators/current-user.decorator';
 import { PrismaService } from '../prisma/prisma.service';
-import { DEFAULT_RESTAURANT_ID } from '../common/constants/tenancy';
 import { InventoryService } from './inventory.service';
 
 type MockPrisma = {
@@ -34,6 +34,16 @@ function createMockPrisma(): MockPrisma {
   };
 }
 
+function buildUser(overrides: Partial<AuthUser> = {}): AuthUser {
+  return {
+    id: 'user-1',
+    email: 'manager@restosync.local',
+    role: Role.MANAGER,
+    restaurantId: 'restaurant-A',
+    ...overrides,
+  };
+}
+
 describe('InventoryService', () => {
   let service: InventoryService;
   let prisma: MockPrisma;
@@ -41,7 +51,7 @@ describe('InventoryService', () => {
   let txInventoryItemUpdate: jest.Mock;
 
   const itemId = 'item-1';
-  const actorId = 'user-1';
+  const user = buildUser();
 
   beforeEach(() => {
     prisma = createMockPrisma();
@@ -58,8 +68,22 @@ describe('InventoryService', () => {
     service = new InventoryService(prisma as unknown as PrismaService);
   });
 
+  describe('findAll', () => {
+    it('scopes the query to the caller restaurantId', async () => {
+      prisma.inventoryItem.findMany.mockResolvedValue([]);
+
+      await service.findAll(user);
+
+      expect(prisma.inventoryItem.findMany).toHaveBeenCalledWith({
+        where: { restaurantId: user.restaurantId },
+        include: { menuItem: true },
+        orderBy: { name: 'asc' },
+      });
+    });
+  });
+
   describe('create', () => {
-    it('creates an item with the correct fields', async () => {
+    it('creates an item with the correct fields, using the caller restaurantId', async () => {
       prisma.inventoryItem.create.mockResolvedValue({
         id: itemId,
         name: 'Tomato',
@@ -67,14 +91,18 @@ describe('InventoryService', () => {
         quantityOnHand: 10,
         lowStockThreshold: 3,
         menuItemId: null,
+        restaurantId: user.restaurantId,
       });
 
-      await service.create({
-        name: 'Tomato',
-        unit: 'kg',
-        quantityOnHand: 10,
-        lowStockThreshold: 3,
-      });
+      await service.create(
+        {
+          name: 'Tomato',
+          unit: 'kg',
+          quantityOnHand: 10,
+          lowStockThreshold: 3,
+        },
+        user,
+      );
 
       expect(prisma.inventoryItem.create).toHaveBeenCalledWith({
         data: {
@@ -83,7 +111,7 @@ describe('InventoryService', () => {
           quantityOnHand: 10,
           lowStockThreshold: 3,
           menuItemId: null,
-          restaurantId: DEFAULT_RESTAURANT_ID,
+          restaurantId: user.restaurantId,
         },
       });
     });
@@ -91,7 +119,7 @@ describe('InventoryService', () => {
     it('applies defaults when optional fields are omitted', async () => {
       prisma.inventoryItem.create.mockResolvedValue({});
 
-      await service.create({ name: 'Salt' });
+      await service.create({ name: 'Salt' }, user);
 
       expect(prisma.inventoryItem.create).toHaveBeenCalledWith({
         data: {
@@ -100,23 +128,40 @@ describe('InventoryService', () => {
           quantityOnHand: 0,
           lowStockThreshold: 0,
           menuItemId: null,
-          restaurantId: DEFAULT_RESTAURANT_ID,
+          restaurantId: user.restaurantId,
         },
       });
+    });
+
+    it("ignores a client-supplied restaurantId and always uses the caller's own", async () => {
+      prisma.inventoryItem.create.mockResolvedValue({});
+
+      await service.create(
+        {
+          name: 'Salt',
+          // @ts-expect-error simulating a malicious/naive client payload
+          restaurantId: 'restaurant-EVIL',
+        },
+        user,
+      );
+
+      const { data } = prisma.inventoryItem.create.mock.calls[0][0];
+      expect(data.restaurantId).toBe(user.restaurantId);
     });
   });
 
   describe('findOne', () => {
-    it('returns the item with its relations', async () => {
+    it('returns the item with its relations when it belongs to the caller restaurant', async () => {
       const item = {
         id: itemId,
         name: 'Tomato',
+        restaurantId: user.restaurantId,
         menuItem: null,
         adjustments: [],
       };
       prisma.inventoryItem.findUnique.mockResolvedValue(item);
 
-      const result = await service.findOne(itemId);
+      const result = await service.findOne(itemId, user);
 
       expect(prisma.inventoryItem.findUnique).toHaveBeenCalledWith({
         where: { id: itemId },
@@ -128,7 +173,21 @@ describe('InventoryService', () => {
     it('throws NotFoundException if the item does not exist', async () => {
       prisma.inventoryItem.findUnique.mockResolvedValue(null);
 
-      await expect(service.findOne(itemId)).rejects.toThrow(NotFoundException);
+      await expect(service.findOne(itemId, user)).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it('throws NotFoundException (not the item) for an item belonging to another restaurant', async () => {
+      prisma.inventoryItem.findUnique.mockResolvedValue({
+        id: itemId,
+        name: 'Secret Sauce',
+        restaurantId: 'restaurant-B',
+      });
+
+      await expect(service.findOne(itemId, user)).rejects.toThrow(
+        NotFoundException,
+      );
     });
   });
 
@@ -137,12 +196,14 @@ describe('InventoryService', () => {
       prisma.inventoryItem.findUnique.mockResolvedValue({
         id: itemId,
         quantityOnHand: 10,
+        restaurantId: user.restaurantId,
       });
 
       await service.adjust(
         itemId,
         { type: AdjustmentType.RESTOCK, quantityDelta: 5 },
-        actorId,
+        user.id,
+        user.restaurantId,
       );
 
       expect(txInventoryItemUpdate).toHaveBeenCalledWith({
@@ -156,12 +217,14 @@ describe('InventoryService', () => {
       prisma.inventoryItem.findUnique.mockResolvedValue({
         id: itemId,
         quantityOnHand: 15,
+        restaurantId: user.restaurantId,
       });
 
       await service.adjust(
         itemId,
         { type: AdjustmentType.WASTE, quantityDelta: -13 },
-        actorId,
+        user.id,
+        user.restaurantId,
       );
 
       expect(txInventoryItemUpdate).toHaveBeenCalledWith({
@@ -175,12 +238,14 @@ describe('InventoryService', () => {
       prisma.inventoryItem.findUnique.mockResolvedValue({
         id: itemId,
         quantityOnHand: 2,
+        restaurantId: user.restaurantId,
       });
 
       await service.adjust(
         itemId,
         { type: AdjustmentType.WASTE, quantityDelta: -99 },
-        actorId,
+        user.id,
+        user.restaurantId,
       );
 
       expect(txInventoryItemUpdate).toHaveBeenCalledWith({
@@ -194,12 +259,14 @@ describe('InventoryService', () => {
       prisma.inventoryItem.findUnique.mockResolvedValue({
         id: itemId,
         quantityOnHand: 3,
+        restaurantId: user.restaurantId,
       });
 
       await service.adjust(
         itemId,
         { type: AdjustmentType.SALE, quantityDelta: -5 },
-        actorId,
+        user.id,
+        user.restaurantId,
       );
 
       expect(txInventoryItemUpdate).toHaveBeenCalledWith({
@@ -213,8 +280,8 @@ describe('InventoryService', () => {
           type: AdjustmentType.SALE,
           quantityDelta: -5,
           reason: null,
-          performedById: actorId,
-          restaurantId: DEFAULT_RESTAURANT_ID,
+          performedById: user.id,
+          restaurantId: user.restaurantId,
         },
       });
     });
@@ -223,6 +290,7 @@ describe('InventoryService', () => {
       prisma.inventoryItem.findUnique.mockResolvedValue({
         id: itemId,
         quantityOnHand: 10,
+        restaurantId: user.restaurantId,
       });
 
       await service.adjust(
@@ -232,7 +300,8 @@ describe('InventoryService', () => {
           quantityDelta: -1,
           reason: 'Recount',
         },
-        actorId,
+        user.id,
+        user.restaurantId,
       );
 
       expect(txStockAdjustmentCreate).toHaveBeenCalledWith({
@@ -241,8 +310,8 @@ describe('InventoryService', () => {
           type: AdjustmentType.CORRECTION,
           quantityDelta: -1,
           reason: 'Recount',
-          performedById: actorId,
-          restaurantId: DEFAULT_RESTAURANT_ID,
+          performedById: user.id,
+          restaurantId: user.restaurantId,
         },
       });
     });
@@ -254,7 +323,26 @@ describe('InventoryService', () => {
         service.adjust(
           itemId,
           { type: AdjustmentType.RESTOCK, quantityDelta: 5 },
-          actorId,
+          user.id,
+          user.restaurantId,
+        ),
+      ).rejects.toThrow(NotFoundException);
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('throws NotFoundException (not the item) for an item belonging to another restaurant', async () => {
+      prisma.inventoryItem.findUnique.mockResolvedValue({
+        id: itemId,
+        quantityOnHand: 10,
+        restaurantId: 'restaurant-B',
+      });
+
+      await expect(
+        service.adjust(
+          itemId,
+          { type: AdjustmentType.RESTOCK, quantityDelta: 5 },
+          user.id,
+          user.restaurantId,
         ),
       ).rejects.toThrow(NotFoundException);
       expect(prisma.$transaction).not.toHaveBeenCalled();
@@ -268,20 +356,23 @@ describe('InventoryService', () => {
         { id: '2', quantityOnHand: 10, lowStockThreshold: 3 },
       ]);
 
-      const result = await service.findLowStock();
+      const result = await service.findLowStock(user);
 
       expect(result).toHaveLength(1);
       expect(result[0].id).toBe('1');
     });
 
-    it('excludes items with lowStockThreshold = 0 via the where filter', async () => {
+    it('excludes items with lowStockThreshold = 0 via the where filter, scoped by restaurantId', async () => {
       prisma.inventoryItem.findMany.mockResolvedValue([]);
 
-      await service.findLowStock();
+      await service.findLowStock(user);
 
       expect(prisma.inventoryItem.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { lowStockThreshold: { gt: 0 } },
+          where: {
+            restaurantId: user.restaurantId,
+            lowStockThreshold: { gt: 0 },
+          },
         }),
       );
     });
@@ -291,7 +382,7 @@ describe('InventoryService', () => {
         { id: '1', quantityOnHand: 0, lowStockThreshold: 3 },
       ]);
 
-      const result = await service.findLowStock();
+      const result = await service.findLowStock(user);
 
       expect(result[0].alertLevel).toBe('CRITICAL');
     });
@@ -301,7 +392,7 @@ describe('InventoryService', () => {
         { id: '1', quantityOnHand: 2, lowStockThreshold: 3 },
       ]);
 
-      const result = await service.findLowStock();
+      const result = await service.findLowStock(user);
 
       expect(result[0].alertLevel).toBe('LOW');
     });
@@ -311,7 +402,7 @@ describe('InventoryService', () => {
         { id: '1', quantityOnHand: 10, lowStockThreshold: 3 },
       ]);
 
-      const result = await service.findLowStock();
+      const result = await service.findLowStock(user);
 
       expect(result).toEqual([]);
     });

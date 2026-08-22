@@ -11,17 +11,12 @@ const SALE_STATUSES: OrderStatus[] = [
 export class ReportsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async getDailySummary(
-    date: string,
-    restaurantId?: string,
-    timezone?: string,
-  ) {
-    void restaurantId;
-
+  async getDailySummary(date: string, restaurantId: string, timezone?: string) {
     const { gte, lt } = this.dayRange(date, timezone);
 
     const result = await this.prisma.order.aggregate({
       where: {
+        restaurantId,
         status: { in: SALE_STATUSES },
         createdAt: { gte, lt },
       },
@@ -37,12 +32,17 @@ export class ReportsService {
     return { totalSalesCents, ticketCount, averageTicketCents };
   }
 
-  async getPaymentMethodBreakdown(date: string, timezone?: string) {
+  async getPaymentMethodBreakdown(
+    date: string,
+    restaurantId: string,
+    timezone?: string,
+  ) {
     const { gte, lt } = this.dayRange(date, timezone);
 
     const grouped = await this.prisma.payment.groupBy({
       by: ['method'],
       where: {
+        restaurantId,
         status: PaymentStatus.SUCCEEDED,
         createdAt: { gte, lt },
       },
@@ -61,12 +61,18 @@ export class ReportsService {
     return byMethod;
   }
 
-  async getBestSellingProducts(date: string, limit = 10, timezone?: string) {
+  async getBestSellingProducts(
+    date: string,
+    restaurantId: string,
+    limit = 10,
+    timezone?: string,
+  ) {
     const { gte, lt } = this.dayRange(date, timezone);
 
     const grouped = await this.prisma.orderItem.groupBy({
       by: ['menuItemId', 'nameSnapshot'],
       where: {
+        restaurantId,
         order: {
           status: { in: SALE_STATUSES },
           createdAt: { gte, lt },
@@ -88,6 +94,7 @@ export class ReportsService {
   async getClosedTickets(
     startDate: string,
     endDate: string,
+    restaurantId: string,
     timezone?: string,
   ) {
     const { gte } = this.dayRange(startDate, timezone);
@@ -95,6 +102,7 @@ export class ReportsService {
 
     const orders = await this.prisma.order.findMany({
       where: {
+        restaurantId,
         status: { in: SALE_STATUSES },
         createdAt: { gte, lt },
       },
@@ -122,6 +130,7 @@ export class ReportsService {
   async getDailySummaryRange(
     startDate: string,
     endDate: string,
+    restaurantId: string,
     timezone?: string,
   ) {
     const { gte } = this.dayRange(startDate, timezone);
@@ -129,6 +138,7 @@ export class ReportsService {
 
     const orders = await this.prisma.order.findMany({
       where: {
+        restaurantId,
         status: { in: SALE_STATUSES },
         createdAt: { gte, lt },
       },
@@ -168,6 +178,7 @@ export class ReportsService {
   async getPaymentMethodBreakdownRange(
     startDate: string,
     endDate: string,
+    restaurantId: string,
     timezone?: string,
   ) {
     const { gte } = this.dayRange(startDate, timezone);
@@ -176,6 +187,7 @@ export class ReportsService {
     const grouped = await this.prisma.payment.groupBy({
       by: ['method'],
       where: {
+        restaurantId,
         status: PaymentStatus.SUCCEEDED,
         createdAt: { gte, lt },
       },
@@ -197,6 +209,7 @@ export class ReportsService {
   async getTicketCountByDay(
     startDate: string,
     endDate: string,
+    restaurantId: string,
     timezone?: string,
   ) {
     const { gte } = this.dayRange(startDate, timezone);
@@ -204,6 +217,7 @@ export class ReportsService {
 
     const orders = await this.prisma.order.findMany({
       where: {
+        restaurantId,
         status: { in: SALE_STATUSES },
         createdAt: { gte, lt },
       },

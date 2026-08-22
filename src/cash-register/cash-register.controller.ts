@@ -14,7 +14,10 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { Role } from '@prisma/client';
-import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import {
+  AuthUser,
+  CurrentUser,
+} from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { CashRegisterService } from './cash-register.service';
 import { CloseSessionDto } from './dto/close-session.dto';
@@ -33,8 +36,8 @@ export class CashRegisterController {
   @ApiResponse({ status: 201, description: 'Session opened' })
   @ApiResponse({ status: 400, description: 'Session already open' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
-  openSession(@Body() dto: OpenSessionDto, @CurrentUser('id') userId: string) {
-    return this.cashRegisterService.openSession(dto, userId);
+  openSession(@Body() dto: OpenSessionDto, @CurrentUser() user: AuthUser) {
+    return this.cashRegisterService.openSession(dto, user);
   }
 
   @Roles(Role.CASHIER, Role.MANAGER, Role.ADMIN)
@@ -47,11 +50,8 @@ export class CashRegisterController {
   })
   @ApiResponse({ status: 400, description: 'No active session' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
-  closeSession(
-    @Body() dto: CloseSessionDto,
-    @CurrentUser('id') userId: string,
-  ) {
-    return this.cashRegisterService.closeSession(dto, userId);
+  closeSession(@Body() dto: CloseSessionDto, @CurrentUser() user: AuthUser) {
+    return this.cashRegisterService.closeSession(dto, user);
   }
 
   @Roles(Role.CASHIER, Role.MANAGER, Role.ADMIN)
@@ -62,8 +62,8 @@ export class CashRegisterController {
     description: 'Session summary with totals by payment method',
   })
   @ApiResponse({ status: 404, description: 'Session not found' })
-  getSessionSummary(@Param('id') id: string) {
-    return this.cashRegisterService.getSessionSummary(id);
+  getSessionSummary(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+    return this.cashRegisterService.getSessionSummary(id, user);
   }
 
   @Roles(Role.CASHIER, Role.MANAGER, Role.ADMIN)
@@ -71,7 +71,7 @@ export class CashRegisterController {
   @ApiOperation({ summary: 'Get summary for the current active session' })
   @ApiResponse({ status: 200, description: 'Current session summary' })
   @ApiResponse({ status: 404, description: 'No active session' })
-  getCurrentSummary() {
-    return this.cashRegisterService.getCurrentSummary();
+  getCurrentSummary(@CurrentUser() user: AuthUser) {
+    return this.cashRegisterService.getCurrentSummary(user);
   }
 }

@@ -1,5 +1,4 @@
 import { PrismaService } from '../prisma/prisma.service';
-import { DEFAULT_RESTAURANT_ID } from '../common/constants/tenancy';
 import { AuditService } from './audit.service';
 
 type MockPrisma = {
@@ -28,7 +27,7 @@ describe('AuditService', () => {
   });
 
   describe('log', () => {
-    it('creates the audit record with the provided fields', async () => {
+    it('creates the audit record with the provided fields, including restaurantId', async () => {
       prisma.auditLog.create.mockResolvedValue({});
 
       await service.log({
@@ -36,6 +35,7 @@ describe('AuditService', () => {
         entityId: 'order-1',
         action: 'DISCOUNT_APPLIED',
         userId: 'user-1',
+        restaurantId: 'restaurant-A',
         metadata: { discountCents: 100 },
       });
 
@@ -46,8 +46,8 @@ describe('AuditService', () => {
           entityId: 'order-1',
           action: 'DISCOUNT_APPLIED',
           userId: 'user-1',
+          restaurantId: 'restaurant-A',
           metadata: { discountCents: 100 },
-          restaurantId: DEFAULT_RESTAURANT_ID,
         },
       });
     });
@@ -60,6 +60,7 @@ describe('AuditService', () => {
         entityId: 'item-1',
         action: 'STOCK_ADJUSTED',
         userId: 'user-2',
+        restaurantId: 'restaurant-A',
       });
 
       expect(prisma.auditLog.create).toHaveBeenCalledWith({
@@ -68,21 +69,22 @@ describe('AuditService', () => {
           entityId: 'item-1',
           action: 'STOCK_ADJUSTED',
           userId: 'user-2',
+          restaurantId: 'restaurant-A',
           metadata: undefined,
-          restaurantId: DEFAULT_RESTAURANT_ID,
         },
       });
     });
   });
 
   describe('findByEntity', () => {
-    it('queries by entityType/entityId ordered by createdAt desc', async () => {
+    it('queries by entityType/entityId AND the caller restaurantId, ordered by createdAt desc', async () => {
       const newest = {
         id: 'log-2',
         entityType: 'Order',
         entityId: 'order-1',
         action: 'DISCOUNT_APPLIED',
         userId: 'user-1',
+        restaurantId: 'restaurant-A',
         metadata: null,
         createdAt: new Date('2026-01-02'),
       };
@@ -92,6 +94,7 @@ describe('AuditService', () => {
         entityId: 'order-1',
         action: 'DISCOUNT_APPLIED',
         userId: 'user-1',
+        restaurantId: 'restaurant-A',
         metadata: null,
         createdAt: new Date('2026-01-01'),
       };
@@ -99,16 +102,46 @@ describe('AuditService', () => {
       // `orderBy` clause (newest first).
       prisma.auditLog.findMany.mockResolvedValue([newest, oldest]);
 
-      const result = await service.findByEntity('Order', 'order-1');
+      const result = await service.findByEntity(
+        'Order',
+        'order-1',
+        'restaurant-A',
+      );
 
       expect(prisma.auditLog.findMany).toHaveBeenCalledWith({
-        where: { entityType: 'Order', entityId: 'order-1' },
+        where: {
+          entityType: 'Order',
+          entityId: 'order-1',
+          restaurantId: 'restaurant-A',
+        },
         orderBy: { createdAt: 'desc' },
       });
       expect(result).toEqual([newest, oldest]);
       expect(result[0].createdAt.getTime()).toBeGreaterThan(
         result[1].createdAt.getTime(),
       );
+    });
+
+    it("never returns another restaurant's audit entries for the same entityId", async () => {
+      // Simulates the DB correctly filtering by restaurantId — a
+      // cross-restaurant log for the same entityId is never returned.
+      prisma.auditLog.findMany.mockResolvedValue([]);
+
+      const result = await service.findByEntity(
+        'Order',
+        'order-1',
+        'restaurant-B',
+      );
+
+      expect(prisma.auditLog.findMany).toHaveBeenCalledWith({
+        where: {
+          entityType: 'Order',
+          entityId: 'order-1',
+          restaurantId: 'restaurant-B',
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+      expect(result).toEqual([]);
     });
   });
 });
