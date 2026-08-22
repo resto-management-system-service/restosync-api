@@ -4,6 +4,7 @@ import { OrderStatus, OrderType, TableStatus } from '@prisma/client';
 import { OrdersService } from './orders.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
+import { RealtimeGateway } from '../realtime/realtime.gateway';
 
 type MockPrisma = {
   order: {
@@ -71,6 +72,18 @@ type MockConfigService = {
   get: jest.Mock;
 };
 
+type MockRealtimeGateway = {
+  emitStatusChanged: jest.Mock;
+  emitTotalsChanged: jest.Mock;
+};
+
+function createMockRealtimeGateway(): MockRealtimeGateway {
+  return {
+    emitStatusChanged: jest.fn().mockResolvedValue(undefined),
+    emitTotalsChanged: jest.fn().mockResolvedValue(undefined),
+  };
+}
+
 // Defaults tax.rate to 0 so pre-existing tests (written before #7 added
 // configurable tax) keep asserting the same totals. Individual tests can
 // override via `config.get.mockImplementation(...)` to exercise non-zero
@@ -91,6 +104,7 @@ describe('OrdersService', () => {
   let prisma: MockPrisma;
   let auditService: MockAuditService;
   let config: MockConfigService;
+  let realtimeGateway: MockRealtimeGateway;
 
   const orderId = 'order-1';
   const menuItemId = 'menu-item-1';
@@ -112,10 +126,12 @@ describe('OrdersService', () => {
     prisma = createMockPrisma();
     auditService = createMockAuditService();
     config = createMockConfigService();
+    realtimeGateway = createMockRealtimeGateway();
     service = new OrdersService(
       prisma as unknown as PrismaService,
       auditService as unknown as AuditService,
       config as unknown as ConfigService,
+      realtimeGateway as unknown as RealtimeGateway,
     );
   });
 
@@ -206,6 +222,66 @@ describe('OrdersService', () => {
     });
   });
 
+  describe('updateStatus', () => {
+    it('emits order.status_changed with the correct payload after a successful transition', async () => {
+      prisma.order.findUnique.mockResolvedValue({
+        ...baseOrder,
+        status: OrderStatus.PENDING,
+      });
+      prisma.order.update.mockResolvedValue({
+        ...baseOrder,
+        status: OrderStatus.CONFIRMED,
+      });
+
+      await service.updateStatus(orderId, OrderStatus.CONFIRMED);
+
+      expect(realtimeGateway.emitStatusChanged).toHaveBeenCalledWith({
+        orderId,
+        status: OrderStatus.CONFIRMED,
+        previousStatus: OrderStatus.PENDING,
+      });
+    });
+
+    it('still completes the status update when the gateway emit throws', async () => {
+      prisma.order.findUnique.mockResolvedValue({
+        ...baseOrder,
+        status: OrderStatus.PENDING,
+      });
+      prisma.order.update.mockResolvedValue({
+        ...baseOrder,
+        status: OrderStatus.CONFIRMED,
+      });
+      realtimeGateway.emitStatusChanged.mockImplementation(() => {
+        throw new Error('socket server unavailable');
+      });
+
+      const result = await service.updateStatus(orderId, OrderStatus.CONFIRMED);
+
+      expect(result.status).toBe(OrderStatus.CONFIRMED);
+      expect(realtimeGateway.emitStatusChanged).toHaveBeenCalled();
+    });
+
+    it('throws BadRequestException for an invalid transition and does not emit', async () => {
+      prisma.order.findUnique.mockResolvedValue({
+        ...baseOrder,
+        status: OrderStatus.COMPLETED,
+      });
+
+      await expect(
+        service.updateStatus(orderId, OrderStatus.CONFIRMED),
+      ).rejects.toThrow(BadRequestException);
+      expect(realtimeGateway.emitStatusChanged).not.toHaveBeenCalled();
+    });
+
+    it('throws NotFoundException if the order does not exist', async () => {
+      prisma.order.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.updateStatus(orderId, OrderStatus.CONFIRMED),
+      ).rejects.toThrow(NotFoundException);
+    });
+  });
+
   describe('addItem', () => {
     it('adds an item with the correct price/name snapshot and recalculates totals', async () => {
       prisma.order.findUnique.mockResolvedValue(baseOrder);
@@ -246,6 +322,57 @@ describe('OrdersService', () => {
         }),
       );
       expect(result.totalCents).toBe(2400);
+    });
+
+    it('emits order.totals_changed with the correct payload via recalculateTotals', async () => {
+      prisma.order.findUnique.mockResolvedValue(baseOrder);
+      prisma.menuItem.findUnique.mockResolvedValue(availableMenuItem);
+      prisma.orderItem.create.mockResolvedValue({});
+      prisma.orderItem.findMany.mockResolvedValue([
+        { priceCents: 1200, quantity: 2 },
+      ]);
+      prisma.order.update.mockResolvedValue({
+        ...baseOrder,
+        subtotalCents: 2400,
+        taxCents: 0,
+        totalCents: 2400,
+      });
+
+      await service.addItem(orderId, { menuItemId, quantity: 2 });
+
+      expect(realtimeGateway.emitTotalsChanged).toHaveBeenCalledWith({
+        orderId,
+        subtotalCents: 2400,
+        taxCents: 0,
+        discountCents: 0,
+        totalCents: 2400,
+      });
+    });
+
+    it('still completes the operation when the gateway emit throws', async () => {
+      prisma.order.findUnique.mockResolvedValue(baseOrder);
+      prisma.menuItem.findUnique.mockResolvedValue(availableMenuItem);
+      prisma.orderItem.create.mockResolvedValue({});
+      prisma.orderItem.findMany.mockResolvedValue([
+        { priceCents: 1200, quantity: 2 },
+      ]);
+      prisma.order.update.mockResolvedValue({
+        ...baseOrder,
+        subtotalCents: 2400,
+        taxCents: 0,
+        totalCents: 2400,
+      });
+      realtimeGateway.emitTotalsChanged.mockImplementation(() => {
+        throw new Error('socket server unavailable');
+      });
+
+      const result = await service.addItem(orderId, {
+        menuItemId,
+        quantity: 2,
+      });
+
+      expect(result.totalCents).toBe(2400);
+      expect(realtimeGateway.emitTotalsChanged).toHaveBeenCalled();
     });
 
     it('throws NotFoundException if the order does not exist', async () => {

@@ -15,6 +15,7 @@ enum Role {
   CASHIER
   MANAGER
   STAFF
+  KITCHEN
   CUSTOMER
 }
 

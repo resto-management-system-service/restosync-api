@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -21,6 +22,7 @@ import {
 } from '../common/dto/pagination-query.dto';
 import { AuthUser } from '../auth/decorators/current-user.decorator';
 import { AuditService } from '../audit/audit.service';
+import { RealtimeGateway } from '../realtime/realtime.gateway';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { AddOrderItemDto } from './dto/add-order-item.dto';
 import { ApplyDiscountDto } from './dto/apply-discount.dto';
@@ -41,10 +43,13 @@ const ACTIVE_ORDER_STATUSES: OrderStatus[] = Object.values(OrderStatus).filter(
 
 @Injectable()
 export class OrdersService {
+  private readonly logger = new Logger(OrdersService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly auditService: AuditService,
     private readonly config: ConfigService,
+    private readonly realtimeGateway: RealtimeGateway,
   ) {}
 
   async create(dto: CreateOrderDto, customerId?: string) {
@@ -178,11 +183,22 @@ export class OrdersService {
         `Cannot transition order from ${order.status} to ${next}`,
       );
     }
-    return this.prisma.order.update({
+    const previousStatus = order.status;
+    const updated = await this.prisma.order.update({
       where: { id },
       data: { status: next },
       include: orderInclude,
     });
+
+    await this.emitRealtimeEvent('order.status_changed', id, () =>
+      this.realtimeGateway.emitStatusChanged({
+        orderId: id,
+        status: next,
+        previousStatus,
+      }),
+    );
+
+    return updated;
   }
 
   async markConfirmed(id: string) {
@@ -343,11 +359,23 @@ export class OrdersService {
       subtotalCents + taxCents - (order?.discountCents ?? 0),
     );
 
-    return this.prisma.order.update({
+    const updated = await this.prisma.order.update({
       where: { id: orderId },
       data: { subtotalCents, taxCents, totalCents },
       include: orderInclude,
     });
+
+    await this.emitRealtimeEvent('order.totals_changed', orderId, () =>
+      this.realtimeGateway.emitTotalsChanged({
+        orderId,
+        subtotalCents,
+        taxCents,
+        discountCents: order?.discountCents ?? 0,
+        totalCents,
+      }),
+    );
+
+    return updated;
   }
 
   async applyDiscount(
@@ -422,5 +450,23 @@ export class OrdersService {
     const ts = Date.now().toString(36).toUpperCase();
     const rand = randomBytes(2).toString('hex').toUpperCase();
     return `ORD-${ts}-${rand}`;
+  }
+
+  // Real-time notification is best-effort: a failure to emit must never
+  // break the underlying order/payment operation, but — unlike #51's
+  // silent inventory hook — it must always leave a trace via warn-level
+  // logging with enough context (orderId, event type) to debug.
+  private async emitRealtimeEvent(
+    eventType: 'order.status_changed' | 'order.totals_changed',
+    orderId: string,
+    emit: () => void | Promise<void>,
+  ): Promise<void> {
+    try {
+      await emit();
+    } catch (err) {
+      this.logger.warn(
+        `Failed to emit realtime event ${eventType} for order ${orderId}: ${err}`,
+      );
+    }
   }
 }

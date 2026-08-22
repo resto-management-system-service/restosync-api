@@ -51,7 +51,7 @@ export class OrdersController {
   }
 
   @Get()
-  @Roles(Role.CASHIER, Role.MANAGER, Role.ADMIN)
+  @Roles(Role.CASHIER, Role.MANAGER, Role.ADMIN, Role.KITCHEN)
   findAll(@Query() query: PaginationQueryDto, @CurrentUser() user: AuthUser) {
     return this.ordersService.findAll(query, user);
   }
@@ -73,7 +73,7 @@ export class OrdersController {
     return this.ordersService.findOne(id, user);
   }
 
-  @Roles(Role.ADMIN, Role.STAFF)
+  @Roles(Role.ADMIN, Role.STAFF, Role.KITCHEN)
   @Patch(':id/status')
   updateStatus(@Param('id') id: string, @Body() dto: UpdateOrderStatusDto) {
     return this.ordersService.updateStatus(id, dto.status);
