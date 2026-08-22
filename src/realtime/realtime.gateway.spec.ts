@@ -1,6 +1,7 @@
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
-import type { Socket } from 'socket.io';
+import { OrderStatus } from '@prisma/client';
+import type { Server, Socket } from 'socket.io';
 import { RealtimeGateway } from './realtime.gateway';
 
 type MockJwtService = { verifyAsync: jest.Mock };
@@ -74,5 +75,39 @@ describe('RealtimeGateway', () => {
 
     expect(socket.data.user).toBeUndefined();
     expect(socket.disconnect).toHaveBeenCalledWith(true);
+  });
+
+  describe('emitStatusChanged', () => {
+    it('emits "order.status_changed" with the given payload via the socket.io server', () => {
+      const server = { emit: jest.fn() };
+      gateway.server = server as unknown as Server;
+
+      const payload = {
+        orderId: 'order-1',
+        status: OrderStatus.CONFIRMED,
+        previousStatus: OrderStatus.PENDING,
+      };
+      gateway.emitStatusChanged(payload);
+
+      expect(server.emit).toHaveBeenCalledWith('order.status_changed', payload);
+    });
+  });
+
+  describe('emitTotalsChanged', () => {
+    it('emits "order.totals_changed" with the given payload via the socket.io server', () => {
+      const server = { emit: jest.fn() };
+      gateway.server = server as unknown as Server;
+
+      const payload = {
+        orderId: 'order-1',
+        subtotalCents: 1200,
+        taxCents: 100,
+        discountCents: 0,
+        totalCents: 1300,
+      };
+      gateway.emitTotalsChanged(payload);
+
+      expect(server.emit).toHaveBeenCalledWith('order.totals_changed', payload);
+    });
   });
 });

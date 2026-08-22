@@ -4,9 +4,11 @@ import { JwtService } from '@nestjs/jwt';
 import {
   OnGatewayConnection,
   WebSocketGateway,
+  WebSocketServer,
   WsException,
 } from '@nestjs/websockets';
-import { Socket } from 'socket.io';
+import { OrderStatus } from '@prisma/client';
+import { Server, Socket } from 'socket.io';
 import { JwtPayload } from '../auth/strategies/jwt.strategy';
 
 export interface SocketUser {
@@ -15,9 +17,26 @@ export interface SocketUser {
   role: string;
 }
 
+export interface StatusChangedPayload {
+  orderId: string;
+  status: OrderStatus;
+  previousStatus: OrderStatus;
+}
+
+export interface TotalsChangedPayload {
+  orderId: string;
+  subtotalCents: number;
+  taxCents: number;
+  discountCents: number;
+  totalCents: number;
+}
+
 @WebSocketGateway()
 export class RealtimeGateway implements OnGatewayConnection {
   private readonly logger = new Logger(RealtimeGateway.name);
+
+  @WebSocketServer()
+  server: Server;
 
   constructor(
     private readonly jwt: JwtService,
@@ -62,5 +81,15 @@ export class RealtimeGateway implements OnGatewayConnection {
 
   private toSocketUser(payload: JwtPayload): SocketUser {
     return { userId: payload.sub, email: payload.email, role: payload.role };
+  }
+
+  // Broadcast to every connected socket — no room/role scoping yet
+  // (that's #159/#156, a separate follow-up).
+  emitStatusChanged(payload: StatusChangedPayload): void {
+    this.server.emit('order.status_changed', payload);
+  }
+
+  emitTotalsChanged(payload: TotalsChangedPayload): void {
+    this.server.emit('order.totals_changed', payload);
   }
 }
