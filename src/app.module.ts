@@ -14,6 +14,7 @@ import { MenuModule } from './menu/menu.module';
 import { OrdersModule } from './orders/orders.module';
 import { PaymentsModule } from './payments/payments.module';
 import { PrismaModule } from './prisma/prisma.module';
+import { RealtimeModule } from './realtime/realtime.module';
 import { ReportsModule } from './reports/reports.module';
 import { ReservationsModule } from './reservations/reservations.module';
 import { TablesModule } from './tables/tables.module';
@@ -38,6 +39,7 @@ import { UsersModule } from './users/users.module';
     BillingModule,
     TablesModule,
     ReservationsModule,
+    RealtimeModule,
   ],
   controllers: [AppController],
   providers: [
