@@ -79,8 +79,8 @@ type MockRealtimeGateway = {
 
 function createMockRealtimeGateway(): MockRealtimeGateway {
   return {
-    emitStatusChanged: jest.fn(),
-    emitTotalsChanged: jest.fn(),
+    emitStatusChanged: jest.fn().mockResolvedValue(undefined),
+    emitTotalsChanged: jest.fn().mockResolvedValue(undefined),
   };
 }
 

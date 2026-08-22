@@ -190,7 +190,7 @@ export class OrdersService {
       include: orderInclude,
     });
 
-    this.emitRealtimeEvent('order.status_changed', id, () =>
+    await this.emitRealtimeEvent('order.status_changed', id, () =>
       this.realtimeGateway.emitStatusChanged({
         orderId: id,
         status: next,
@@ -365,7 +365,7 @@ export class OrdersService {
       include: orderInclude,
     });
 
-    this.emitRealtimeEvent('order.totals_changed', orderId, () =>
+    await this.emitRealtimeEvent('order.totals_changed', orderId, () =>
       this.realtimeGateway.emitTotalsChanged({
         orderId,
         subtotalCents,
@@ -456,13 +456,13 @@ export class OrdersService {
   // break the underlying order/payment operation, but — unlike #51's
   // silent inventory hook — it must always leave a trace via warn-level
   // logging with enough context (orderId, event type) to debug.
-  private emitRealtimeEvent(
+  private async emitRealtimeEvent(
     eventType: 'order.status_changed' | 'order.totals_changed',
     orderId: string,
-    emit: () => void,
-  ): void {
+    emit: () => void | Promise<void>,
+  ): Promise<void> {
     try {
-      emit();
+      await emit();
     } catch (err) {
       this.logger.warn(
         `Failed to emit realtime event ${eventType} for order ${orderId}: ${err}`,
