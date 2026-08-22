@@ -17,6 +17,7 @@ import { PrismaModule } from './prisma/prisma.module';
 import { RealtimeModule } from './realtime/realtime.module';
 import { ReportsModule } from './reports/reports.module';
 import { ReservationsModule } from './reservations/reservations.module';
+import { RestaurantsModule } from './restaurants/restaurants.module';
 import { TablesModule } from './tables/tables.module';
 import { UsersModule } from './users/users.module';
 
@@ -39,6 +40,7 @@ import { UsersModule } from './users/users.module';
     BillingModule,
     TablesModule,
     ReservationsModule,
+    RestaurantsModule,
     RealtimeModule,
   ],
   controllers: [AppController],
