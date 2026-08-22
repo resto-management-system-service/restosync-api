@@ -113,6 +113,7 @@ export class AuthService {
       sub: user.id,
       email: user.email,
       role: user.role,
+      restaurantId: user.restaurantId,
     };
 
     const accessToken = await this.jwt.signAsync(payload, {
