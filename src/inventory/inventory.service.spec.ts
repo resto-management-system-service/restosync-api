@@ -1,6 +1,7 @@
 import { NotFoundException } from '@nestjs/common';
 import { AdjustmentType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { DEFAULT_RESTAURANT_ID } from '../common/constants/tenancy';
 import { InventoryService } from './inventory.service';
 
 type MockPrisma = {
@@ -82,6 +83,7 @@ describe('InventoryService', () => {
           quantityOnHand: 10,
           lowStockThreshold: 3,
           menuItemId: null,
+          restaurantId: DEFAULT_RESTAURANT_ID,
         },
       });
     });
@@ -98,6 +100,7 @@ describe('InventoryService', () => {
           quantityOnHand: 0,
           lowStockThreshold: 0,
           menuItemId: null,
+          restaurantId: DEFAULT_RESTAURANT_ID,
         },
       });
     });
@@ -211,6 +214,7 @@ describe('InventoryService', () => {
           quantityDelta: -5,
           reason: null,
           performedById: actorId,
+          restaurantId: DEFAULT_RESTAURANT_ID,
         },
       });
     });
@@ -238,6 +242,7 @@ describe('InventoryService', () => {
           quantityDelta: -1,
           reason: 'Recount',
           performedById: actorId,
+          restaurantId: DEFAULT_RESTAURANT_ID,
         },
       });
     });

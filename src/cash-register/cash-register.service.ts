@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { PaymentMethod, PaymentStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { DEFAULT_RESTAURANT_ID } from '../common/constants/tenancy';
 import { CloseSessionDto } from './dto/close-session.dto';
 import { OpenSessionDto } from './dto/open-session.dto';
 
@@ -25,6 +26,7 @@ export class CashRegisterService {
         openedById: actorId,
         openingFloatCents: dto.openingFloatCents,
         notes: dto.notes ?? null,
+        restaurantId: DEFAULT_RESTAURANT_ID,
       },
     });
   }

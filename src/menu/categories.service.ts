@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { DEFAULT_RESTAURANT_ID } from '../common/constants/tenancy';
 import { CreateCategoryDto, UpdateCategoryDto } from './dto/category.dto';
 
 @Injectable()
@@ -7,7 +8,9 @@ export class CategoriesService {
   constructor(private readonly prisma: PrismaService) {}
 
   create(dto: CreateCategoryDto) {
-    return this.prisma.category.create({ data: dto });
+    return this.prisma.category.create({
+      data: { ...dto, restaurantId: DEFAULT_RESTAURANT_ID },
+    });
   }
 
   findAll(includeInactive = false) {

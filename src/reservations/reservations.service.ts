@@ -13,6 +13,7 @@ import {
   TableStatus,
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { DEFAULT_RESTAURANT_ID } from '../common/constants/tenancy';
 import { CreateOrderDto } from '../orders/dto/create-order.dto';
 import { OrdersService } from '../orders/orders.service';
 import { localToUtc, utcToLocalDisplay } from '../common/utils/local-time';
@@ -373,6 +374,7 @@ export class ReservationsService {
       reservationType: dto.reservationType,
       status: ReservationStatus.PENDING,
       createdBy: actorId,
+      restaurantId: DEFAULT_RESTAURANT_ID,
     };
   }
 

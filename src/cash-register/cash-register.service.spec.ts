@@ -1,6 +1,7 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { PaymentMethod, PaymentStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { DEFAULT_RESTAURANT_ID } from '../common/constants/tenancy';
 import { CashRegisterService } from './cash-register.service';
 
 type MockPrisma = {
@@ -65,6 +66,7 @@ describe('CashRegisterService', () => {
           openedById: actorId,
           openingFloatCents: 10000,
           notes: null,
+          restaurantId: DEFAULT_RESTAURANT_ID,
         },
       });
       expect(result).toBe(created);

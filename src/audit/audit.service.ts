@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { DEFAULT_RESTAURANT_ID } from '../common/constants/tenancy';
 
 @Injectable()
 export class AuditService {
@@ -17,6 +18,7 @@ export class AuditService {
       data: {
         ...params,
         metadata: params.metadata as Prisma.InputJsonValue | undefined,
+        restaurantId: DEFAULT_RESTAURANT_ID,
       },
     });
   }

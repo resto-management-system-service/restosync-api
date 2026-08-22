@@ -16,6 +16,7 @@ import { InventoryService } from '../inventory/inventory.service';
 import { canTransition } from '../orders/order-status';
 import { OrdersService } from '../orders/orders.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { DEFAULT_RESTAURANT_ID } from '../common/constants/tenancy';
 import { CheckoutDto } from './dto/checkout.dto';
 import {
   GatewayEvent,
@@ -67,6 +68,7 @@ export class PaymentsService {
         amountCents: order.totalCents,
         currency: order.currency,
         status: PaymentStatus.REQUIRES_PAYMENT,
+        restaurantId: DEFAULT_RESTAURANT_ID,
       },
     });
 
@@ -154,6 +156,7 @@ export class PaymentsService {
           currency: order.currency,
           status: PaymentStatus.SUCCEEDED,
           sessionId: activeSession.id,
+          restaurantId: DEFAULT_RESTAURANT_ID,
         },
         include: { order: true },
       });

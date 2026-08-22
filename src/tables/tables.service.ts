@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { OrderStatus, TableStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { DEFAULT_RESTAURANT_ID } from '../common/constants/tenancy';
 import { CreateTableDto } from './dto/create-table.dto';
 import { UpdateTableDto } from './dto/update-table.dto';
 
@@ -34,6 +35,7 @@ export class TablesService {
       data: {
         name: dto.name,
         capacity: dto.capacity ?? null,
+        restaurantId: DEFAULT_RESTAURANT_ID,
       },
     });
   }

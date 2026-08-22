@@ -20,6 +20,7 @@ import {
   paginate,
   PaginationQueryDto,
 } from '../common/dto/pagination-query.dto';
+import { DEFAULT_RESTAURANT_ID } from '../common/constants/tenancy';
 import { AuthUser } from '../auth/decorators/current-user.decorator';
 import { AuditService } from '../audit/audit.service';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
@@ -116,7 +117,13 @@ export class OrdersService {
           totalCents: 0,
           currency,
           notes: dto.notes,
-          items: { create: orderItems },
+          restaurantId: DEFAULT_RESTAURANT_ID,
+          items: {
+            create: orderItems.map((item) => ({
+              ...item,
+              restaurantId: DEFAULT_RESTAURANT_ID,
+            })),
+          },
         },
         include: orderInclude,
       });
@@ -244,6 +251,7 @@ export class OrdersService {
         modifiers: (dto.modifiers ?? null) as Prisma.InputJsonValue,
         notes: dto.notes,
         lineTotalCents,
+        restaurantId: DEFAULT_RESTAURANT_ID,
       },
     });
 

@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { DEFAULT_RESTAURANT_ID } from '../common/constants/tenancy';
 import { AdjustStockDto } from './dto/adjust-stock.dto';
 import { CreateInventoryItemDto } from './dto/create-inventory-item.dto';
 
@@ -33,6 +34,7 @@ export class InventoryService {
         quantityOnHand: dto.quantityOnHand ?? 0,
         lowStockThreshold: dto.lowStockThreshold ?? 0,
         menuItemId: dto.menuItemId ?? null,
+        restaurantId: DEFAULT_RESTAURANT_ID,
       },
     });
   }
@@ -73,6 +75,7 @@ export class InventoryService {
           quantityDelta: dto.quantityDelta,
           reason: dto.reason ?? null,
           performedById: actorId,
+          restaurantId: DEFAULT_RESTAURANT_ID,
         },
       });
 

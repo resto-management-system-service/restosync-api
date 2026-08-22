@@ -1,4 +1,5 @@
 import { PrismaService } from '../prisma/prisma.service';
+import { DEFAULT_RESTAURANT_ID } from '../common/constants/tenancy';
 import { AuditService } from './audit.service';
 
 type MockPrisma = {
@@ -46,6 +47,7 @@ describe('AuditService', () => {
           action: 'DISCOUNT_APPLIED',
           userId: 'user-1',
           metadata: { discountCents: 100 },
+          restaurantId: DEFAULT_RESTAURANT_ID,
         },
       });
     });
@@ -67,6 +69,7 @@ describe('AuditService', () => {
           action: 'STOCK_ADJUSTED',
           userId: 'user-2',
           metadata: undefined,
+          restaurantId: DEFAULT_RESTAURANT_ID,
         },
       });
     });

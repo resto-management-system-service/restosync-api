@@ -6,6 +6,7 @@ import {
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { paginate } from '../common/dto/pagination-query.dto';
+import { DEFAULT_RESTAURANT_ID } from '../common/constants/tenancy';
 import {
   CreateMenuItemDto,
   MenuItemQueryDto,
@@ -20,7 +21,9 @@ export class MenuItemsService {
   constructor(private readonly prisma: PrismaService) {}
 
   create(dto: CreateMenuItemDto) {
-    return this.prisma.menuItem.create({ data: dto });
+    return this.prisma.menuItem.create({
+      data: { ...dto, restaurantId: DEFAULT_RESTAURANT_ID },
+    });
   }
 
   async findAll(query: MenuItemQueryDto) {
