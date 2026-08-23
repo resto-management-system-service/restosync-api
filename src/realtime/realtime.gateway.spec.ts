@@ -2,7 +2,7 @@ import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { OrderStatus } from '@prisma/client';
 import type { Server, Socket } from 'socket.io';
-import { customerRoom, RealtimeGateway, STAFF_ROOM } from './realtime.gateway';
+import { customerRoom, RealtimeGateway, staffRoom } from './realtime.gateway';
 import { PrismaService } from '../prisma/prisma.service';
 
 type MockJwtService = { verifyAsync: jest.Mock };
@@ -52,6 +52,7 @@ describe('RealtimeGateway', () => {
       sub: 'user-1',
       email: 'cook@restosync.dev',
       role: 'KITCHEN',
+      restaurantId: 'restaurant-A',
     });
 
     const socket = createSocket('valid.token');
@@ -64,6 +65,7 @@ describe('RealtimeGateway', () => {
       userId: 'user-1',
       email: 'cook@restosync.dev',
       role: 'KITCHEN',
+      restaurantId: 'restaurant-A',
     });
     expect(socket.disconnect).not.toHaveBeenCalled();
   });
@@ -87,36 +89,62 @@ describe('RealtimeGateway', () => {
     expect(socket.disconnect).toHaveBeenCalledWith(true);
   });
 
-  describe('room assignment on connection (#159/#156/#155)', () => {
+  describe('room assignment on connection (#159/#156/#155/#173)', () => {
     it.each(['KITCHEN', 'CASHIER', 'ADMIN', 'WAITER', 'MANAGER', 'STAFF'])(
-      'a connection with role %s joins the "staff" room',
+      "a connection with role %s joins its OWN restaurant's staff room",
       async (role) => {
         jwt.verifyAsync.mockResolvedValue({
           sub: 'user-1',
           email: 'staff@restosync.dev',
           role,
+          restaurantId: 'restaurant-A',
         });
 
         const socket = createSocket('valid.token');
         await gateway.handleConnection(socket);
 
-        expect(socket.join).toHaveBeenCalledWith(STAFF_ROOM);
+        expect(socket.join).toHaveBeenCalledWith(staffRoom('restaurant-A'));
         expect(socket.join).toHaveBeenCalledTimes(1);
       },
     );
 
-    it('a connection with role CUSTOMER joins customer:${userId}, not the staff room', async () => {
+    it('two staff connections for different restaurants join different staff rooms', async () => {
+      jwt.verifyAsync.mockResolvedValue({
+        sub: 'user-1',
+        email: 'staff-a@restosync.dev',
+        role: 'ADMIN',
+        restaurantId: 'restaurant-A',
+      });
+      const socketA = createSocket('token-a');
+      await gateway.handleConnection(socketA);
+      expect(socketA.join).toHaveBeenCalledWith(staffRoom('restaurant-A'));
+
+      jwt.verifyAsync.mockResolvedValue({
+        sub: 'user-2',
+        email: 'staff-b@restosync.dev',
+        role: 'ADMIN',
+        restaurantId: 'restaurant-B',
+      });
+      const socketB = createSocket('token-b');
+      await gateway.handleConnection(socketB);
+      expect(socketB.join).toHaveBeenCalledWith(staffRoom('restaurant-B'));
+
+      expect(staffRoom('restaurant-A')).not.toEqual(staffRoom('restaurant-B'));
+    });
+
+    it('a connection with role CUSTOMER joins customer:${userId}, not any staff room', async () => {
       jwt.verifyAsync.mockResolvedValue({
         sub: 'customer-1',
         email: 'diner@restosync.dev',
         role: 'CUSTOMER',
+        restaurantId: 'restaurant-A',
       });
 
       const socket = createSocket('valid.token');
       await gateway.handleConnection(socket);
 
       expect(socket.join).toHaveBeenCalledWith(customerRoom('customer-1'));
-      expect(socket.join).not.toHaveBeenCalledWith(STAFF_ROOM);
+      expect(socket.join).not.toHaveBeenCalledWith(staffRoom('restaurant-A'));
       expect(socket.join).toHaveBeenCalledTimes(1);
     });
 
@@ -125,6 +153,7 @@ describe('RealtimeGateway', () => {
         sub: 'user-1',
         email: 'mystery@restosync.dev',
         role: 'SOME_FUTURE_ROLE',
+        restaurantId: 'restaurant-A',
       });
 
       const socket = createSocket('valid.token');
@@ -141,43 +170,46 @@ describe('RealtimeGateway', () => {
       previousStatus: OrderStatus.PENDING,
     };
 
-    it('emits to both "staff" and the owning customer room when the order has a customerId', async () => {
+    it("emits to both the owning restaurant's staff room and the owning customer room when the order has a customerId", async () => {
       const server = { to: jest.fn().mockReturnThis(), emit: jest.fn() };
       gateway.server = server as unknown as Server;
-      prisma.order.findUnique.mockResolvedValue({ customerId: 'customer-1' });
+      prisma.order.findUnique.mockResolvedValue({
+        restaurantId: 'restaurant-A',
+        customerId: 'customer-1',
+      });
 
       await gateway.emitStatusChanged(payload);
 
       expect(prisma.order.findUnique).toHaveBeenCalledWith({
         where: { id: 'order-1' },
-        select: { customerId: true },
+        select: { restaurantId: true, customerId: true },
       });
-      expect(server.to).toHaveBeenCalledWith(STAFF_ROOM);
+      expect(server.to).toHaveBeenCalledWith(staffRoom('restaurant-A'));
       expect(server.to).toHaveBeenCalledWith(customerRoom('customer-1'));
       expect(server.emit).toHaveBeenCalledWith('order.status_changed', payload);
       expect(server.emit).toHaveBeenCalledTimes(2);
     });
 
-    it('emits ONLY to "staff" when the order has no customerId (walk-in order)', async () => {
+    it("emits ONLY to the owning restaurant's staff room when the order has no customerId (walk-in order)", async () => {
       const server = { to: jest.fn().mockReturnThis(), emit: jest.fn() };
       gateway.server = server as unknown as Server;
-      prisma.order.findUnique.mockResolvedValue({ customerId: null });
+      prisma.order.findUnique.mockResolvedValue({
+        restaurantId: 'restaurant-A',
+        customerId: null,
+      });
 
       await gateway.emitStatusChanged(payload);
 
-      expect(server.to).toHaveBeenCalledWith(STAFF_ROOM);
+      expect(server.to).toHaveBeenCalledWith(staffRoom('restaurant-A'));
       expect(server.to).toHaveBeenCalledTimes(1);
       expect(server.emit).toHaveBeenCalledTimes(1);
     });
 
     it('does not deliver the event to an unrelated customer room (security property)', async () => {
-      // Simulates two independently-tracked "rooms" via separate emit
-      // spies, proving customer B's handler is never invoked for an
-      // event scoped to customer A.
       const customerAHandler = jest.fn();
       const customerBHandler = jest.fn();
       const rooms: Record<string, { emit: jest.Mock }> = {
-        [STAFF_ROOM]: { emit: jest.fn() },
+        [staffRoom('restaurant-A')]: { emit: jest.fn() },
         [customerRoom('customer-A')]: { emit: customerAHandler },
         [customerRoom('customer-B')]: { emit: customerBHandler },
       };
@@ -185,7 +217,10 @@ describe('RealtimeGateway', () => {
         to: jest.fn((room: string) => rooms[room] ?? { emit: jest.fn() }),
       };
       gateway.server = server as unknown as Server;
-      prisma.order.findUnique.mockResolvedValue({ customerId: 'customer-A' });
+      prisma.order.findUnique.mockResolvedValue({
+        restaurantId: 'restaurant-A',
+        customerId: 'customer-A',
+      });
 
       await gateway.emitStatusChanged(payload);
 
@@ -194,6 +229,43 @@ describe('RealtimeGateway', () => {
         payload,
       );
       expect(customerBHandler).not.toHaveBeenCalled();
+    });
+
+    it("#173: does not deliver the event to another restaurant's staff room (security property)", async () => {
+      const staffAHandler = jest.fn();
+      const staffBHandler = jest.fn();
+      const rooms: Record<string, { emit: jest.Mock }> = {
+        [staffRoom('restaurant-A')]: { emit: staffAHandler },
+        [staffRoom('restaurant-B')]: { emit: staffBHandler },
+      };
+      const server = {
+        to: jest.fn((room: string) => rooms[room] ?? { emit: jest.fn() }),
+      };
+      gateway.server = server as unknown as Server;
+      // Order belongs to restaurant A only.
+      prisma.order.findUnique.mockResolvedValue({
+        restaurantId: 'restaurant-A',
+        customerId: null,
+      });
+
+      await gateway.emitStatusChanged(payload);
+
+      expect(staffAHandler).toHaveBeenCalledWith(
+        'order.status_changed',
+        payload,
+      );
+      expect(staffBHandler).not.toHaveBeenCalled();
+    });
+
+    it('emits nothing when the order no longer exists', async () => {
+      const server = { to: jest.fn().mockReturnThis(), emit: jest.fn() };
+      gateway.server = server as unknown as Server;
+      prisma.order.findUnique.mockResolvedValue(null);
+
+      await gateway.emitStatusChanged(payload);
+
+      expect(server.to).not.toHaveBeenCalled();
+      expect(server.emit).not.toHaveBeenCalled();
     });
   });
 
@@ -206,27 +278,33 @@ describe('RealtimeGateway', () => {
       totalCents: 1300,
     };
 
-    it('emits to both "staff" and the owning customer room when the order has a customerId', async () => {
+    it("emits to both the owning restaurant's staff room and the owning customer room when the order has a customerId", async () => {
       const server = { to: jest.fn().mockReturnThis(), emit: jest.fn() };
       gateway.server = server as unknown as Server;
-      prisma.order.findUnique.mockResolvedValue({ customerId: 'customer-1' });
+      prisma.order.findUnique.mockResolvedValue({
+        restaurantId: 'restaurant-A',
+        customerId: 'customer-1',
+      });
 
       await gateway.emitTotalsChanged(payload);
 
-      expect(server.to).toHaveBeenCalledWith(STAFF_ROOM);
+      expect(server.to).toHaveBeenCalledWith(staffRoom('restaurant-A'));
       expect(server.to).toHaveBeenCalledWith(customerRoom('customer-1'));
       expect(server.emit).toHaveBeenCalledWith('order.totals_changed', payload);
       expect(server.emit).toHaveBeenCalledTimes(2);
     });
 
-    it('emits ONLY to "staff" when the order has no customerId (walk-in order)', async () => {
+    it("emits ONLY to the owning restaurant's staff room when the order has no customerId (walk-in order)", async () => {
       const server = { to: jest.fn().mockReturnThis(), emit: jest.fn() };
       gateway.server = server as unknown as Server;
-      prisma.order.findUnique.mockResolvedValue({ customerId: null });
+      prisma.order.findUnique.mockResolvedValue({
+        restaurantId: 'restaurant-A',
+        customerId: null,
+      });
 
       await gateway.emitTotalsChanged(payload);
 
-      expect(server.to).toHaveBeenCalledWith(STAFF_ROOM);
+      expect(server.to).toHaveBeenCalledWith(staffRoom('restaurant-A'));
       expect(server.to).toHaveBeenCalledTimes(1);
       expect(server.emit).toHaveBeenCalledTimes(1);
     });
@@ -235,7 +313,7 @@ describe('RealtimeGateway', () => {
       const customerAHandler = jest.fn();
       const customerBHandler = jest.fn();
       const rooms: Record<string, { emit: jest.Mock }> = {
-        [STAFF_ROOM]: { emit: jest.fn() },
+        [staffRoom('restaurant-A')]: { emit: jest.fn() },
         [customerRoom('customer-A')]: { emit: customerAHandler },
         [customerRoom('customer-B')]: { emit: customerBHandler },
       };
@@ -243,7 +321,10 @@ describe('RealtimeGateway', () => {
         to: jest.fn((room: string) => rooms[room] ?? { emit: jest.fn() }),
       };
       gateway.server = server as unknown as Server;
-      prisma.order.findUnique.mockResolvedValue({ customerId: 'customer-A' });
+      prisma.order.findUnique.mockResolvedValue({
+        restaurantId: 'restaurant-A',
+        customerId: 'customer-A',
+      });
 
       await gateway.emitTotalsChanged(payload);
 
@@ -252,6 +333,31 @@ describe('RealtimeGateway', () => {
         payload,
       );
       expect(customerBHandler).not.toHaveBeenCalled();
+    });
+
+    it("#173: does not deliver the event to another restaurant's staff room (security property)", async () => {
+      const staffAHandler = jest.fn();
+      const staffBHandler = jest.fn();
+      const rooms: Record<string, { emit: jest.Mock }> = {
+        [staffRoom('restaurant-A')]: { emit: staffAHandler },
+        [staffRoom('restaurant-B')]: { emit: staffBHandler },
+      };
+      const server = {
+        to: jest.fn((room: string) => rooms[room] ?? { emit: jest.fn() }),
+      };
+      gateway.server = server as unknown as Server;
+      prisma.order.findUnique.mockResolvedValue({
+        restaurantId: 'restaurant-A',
+        customerId: null,
+      });
+
+      await gateway.emitTotalsChanged(payload);
+
+      expect(staffAHandler).toHaveBeenCalledWith(
+        'order.totals_changed',
+        payload,
+      );
+      expect(staffBHandler).not.toHaveBeenCalled();
     });
   });
 });

@@ -18,7 +18,10 @@ import {
 } from '@nestjs/swagger';
 import { Role } from '@prisma/client';
 import { Request } from 'express';
-import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import {
+  AuthUser,
+  CurrentUser,
+} from '../auth/decorators/current-user.decorator';
 import { Public } from '../auth/decorators/public.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { CheckoutDto } from './dto/checkout.dto';
@@ -33,8 +36,8 @@ export class PaymentsController {
   @ApiBearerAuth()
   @Post('intent')
   @HttpCode(HttpStatus.CREATED)
-  createIntent(@Body() dto: CreateIntentDto) {
-    return this.paymentsService.createIntent(dto.orderId);
+  createIntent(@Body() dto: CreateIntentDto, @CurrentUser() user: AuthUser) {
+    return this.paymentsService.createIntent(dto.orderId, user);
   }
 
   @ApiBearerAuth()
@@ -52,8 +55,8 @@ export class PaymentsController {
   })
   @ApiResponse({ status: 404, description: 'Order not found' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
-  checkout(@Body() dto: CheckoutDto, @CurrentUser('id') userId: string) {
-    return this.paymentsService.checkout(dto, userId);
+  checkout(@Body() dto: CheckoutDto, @CurrentUser() user: AuthUser) {
+    return this.paymentsService.checkout(dto, user);
   }
 
   @Public()

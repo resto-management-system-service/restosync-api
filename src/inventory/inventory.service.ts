@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { AuthUser } from '../auth/decorators/current-user.decorator';
 import { PrismaService } from '../prisma/prisma.service';
 import { AdjustStockDto } from './dto/adjust-stock.dto';
 import { CreateInventoryItemDto } from './dto/create-inventory-item.dto';
@@ -7,25 +8,26 @@ import { CreateInventoryItemDto } from './dto/create-inventory-item.dto';
 export class InventoryService {
   constructor(private readonly prisma: PrismaService) {}
 
-  findAll() {
+  findAll(user: AuthUser) {
     return this.prisma.inventoryItem.findMany({
+      where: { restaurantId: user.restaurantId },
       include: { menuItem: true },
       orderBy: { name: 'asc' },
     });
   }
 
-  async findOne(id: string) {
+  async findOne(id: string, user: AuthUser) {
     const item = await this.prisma.inventoryItem.findUnique({
       where: { id },
       include: { menuItem: true, adjustments: true },
     });
-    if (!item) {
+    if (!item || item.restaurantId !== user.restaurantId) {
       throw new NotFoundException('Inventory item not found');
     }
     return item;
   }
 
-  create(dto: CreateInventoryItemDto) {
+  create(dto: CreateInventoryItemDto, user: AuthUser) {
     return this.prisma.inventoryItem.create({
       data: {
         name: dto.name,
@@ -33,12 +35,17 @@ export class InventoryService {
         quantityOnHand: dto.quantityOnHand ?? 0,
         lowStockThreshold: dto.lowStockThreshold ?? 0,
         menuItemId: dto.menuItemId ?? null,
+        restaurantId: user.restaurantId,
       },
     });
   }
 
-  async update(id: string, dto: Partial<CreateInventoryItemDto>) {
-    await this.ensureExists(id);
+  async update(
+    id: string,
+    dto: Partial<CreateInventoryItemDto>,
+    user: AuthUser,
+  ) {
+    await this.ensureExists(id, user);
     return this.prisma.inventoryItem.update({
       where: { id },
       data: {
@@ -52,16 +59,25 @@ export class InventoryService {
     });
   }
 
-  async remove(id: string) {
-    await this.ensureExists(id);
+  async remove(id: string, user: AuthUser) {
+    await this.ensureExists(id, user);
     return this.prisma.inventoryItem.delete({ where: { id } });
   }
 
-  async adjust(id: string, dto: AdjustStockDto, actorId: string) {
+  // Takes restaurantId/actorId directly rather than a full AuthUser: this
+  // is also called internally by PaymentsService's best-effort inventory
+  // hook (#51), which acts on behalf of an already-verified order/actor
+  // pair rather than an authenticated HTTP request.
+  async adjust(
+    id: string,
+    dto: AdjustStockDto,
+    actorId: string,
+    restaurantId: string,
+  ) {
     const item = await this.prisma.inventoryItem.findUnique({
       where: { id },
     });
-    if (!item) {
+    if (!item || item.restaurantId !== restaurantId) {
       throw new NotFoundException('Inventory item not found');
     }
 
@@ -73,6 +89,7 @@ export class InventoryService {
           quantityDelta: dto.quantityDelta,
           reason: dto.reason ?? null,
           performedById: actorId,
+          restaurantId,
         },
       });
 
@@ -86,9 +103,9 @@ export class InventoryService {
     });
   }
 
-  async findLowStock() {
+  async findLowStock(user: AuthUser) {
     const items = await this.prisma.inventoryItem.findMany({
-      where: { lowStockThreshold: { gt: 0 } },
+      where: { restaurantId: user.restaurantId, lowStockThreshold: { gt: 0 } },
       orderBy: { name: 'asc' },
     });
     return items
@@ -100,11 +117,11 @@ export class InventoryService {
       }));
   }
 
-  private async ensureExists(id: string) {
+  private async ensureExists(id: string, user: AuthUser) {
     const exists = await this.prisma.inventoryItem.findUnique({
       where: { id },
     });
-    if (!exists) {
+    if (!exists || exists.restaurantId !== user.restaurantId) {
       throw new NotFoundException('Inventory item not found');
     }
   }

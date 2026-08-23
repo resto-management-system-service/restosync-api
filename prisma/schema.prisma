@@ -7,6 +7,30 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// ---------- Tenancy ----------
+
+model Restaurant {
+  id                   String                @id @default(uuid())
+  name                 String
+  timezone             String                @default("America/Lima")
+  users                User[]
+  categories           Category[]
+  menuItems            MenuItem[]
+  orders               Order[]
+  orderItems           OrderItem[]
+  tables               Table[]
+  inventoryItems       InventoryItem[]
+  stockAdjustments     StockAdjustment[]
+  reservations         Reservation[]
+  cashRegisterSessions CashRegisterSession[]
+  payments             Payment[]
+  auditLogs            AuditLog[]
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
+
+  @@map("restaurants")
+}
+
 // ---------- Auth / Users ----------
 
 enum Role {
@@ -27,6 +51,8 @@ model User {
   lastName         String?
   role             Role                  @default(CUSTOMER)
   active           Boolean               @default(true)
+  restaurantId     String
+  restaurant       Restaurant            @relation(fields: [restaurantId], references: [id])
   orders           Order[]
   openedSessions   CashRegisterSession[] @relation("OpenedSessions")
   closedSessions   CashRegisterSession[] @relation("ClosedSessions")
@@ -35,6 +61,7 @@ model User {
   createdAt        DateTime              @default(now())
   updatedAt        DateTime              @updatedAt
 
+  @@index([restaurantId])
   @@map("users")
 }
 
@@ -55,14 +82,17 @@ model Session {
 // ---------- Menu ----------
 
 model Category {
-  id        String     @id @default(uuid())
-  name      String
-  sortOrder Int        @default(0)
-  active    Boolean    @default(true)
-  items     MenuItem[]
-  createdAt DateTime   @default(now())
-  updatedAt DateTime   @updatedAt
+  id           String     @id @default(uuid())
+  name         String
+  sortOrder    Int        @default(0)
+  active       Boolean    @default(true)
+  restaurantId String
+  restaurant   Restaurant @relation(fields: [restaurantId], references: [id])
+  items        MenuItem[]
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
 
+  @@index([restaurantId])
   @@map("categories")
 }
 
@@ -76,12 +106,15 @@ model MenuItem {
   available     Boolean        @default(true)
   categoryId    String
   category      Category       @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  restaurantId  String
+  restaurant    Restaurant     @relation(fields: [restaurantId], references: [id])
   orderItems    OrderItem[]
   inventoryItem InventoryItem?
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
 
   @@index([categoryId])
+  @@index([restaurantId])
   @@map("menu_items")
 }
 
@@ -118,11 +151,14 @@ model Table {
   name         String        @unique
   capacity     Int?
   status       TableStatus   @default(AVAILABLE)
+  restaurantId String
+  restaurant   Restaurant    @relation(fields: [restaurantId], references: [id])
   orders       Order[]
   reservations Reservation[]
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
 
+  @@index([restaurantId])
   @@map("tables")
 }
 
@@ -146,6 +182,8 @@ model Order {
   discountReason    String?
   currency          String       @default("usd")
   notes             String?
+  restaurantId      String
+  restaurant        Restaurant   @relation(fields: [restaurantId], references: [id])
   items             OrderItem[]
   payments          Payment[]
   reservation       Reservation?
@@ -155,15 +193,16 @@ model Order {
   @@index([customerId])
   @@index([status])
   @@index([tableId])
+  @@index([restaurantId])
   @@map("orders")
 }
 
 model OrderItem {
-  id             String   @id @default(uuid())
+  id             String     @id @default(uuid())
   orderId        String
-  order          Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  order          Order      @relation(fields: [orderId], references: [id], onDelete: Cascade)
   menuItemId     String
-  menuItem       MenuItem @relation(fields: [menuItemId], references: [id], onDelete: Restrict)
+  menuItem       MenuItem   @relation(fields: [menuItemId], references: [id], onDelete: Restrict)
   // Snapshot of menu item at order time — prices must not change retroactively.
   nameSnapshot   String
   priceCents     Int
@@ -171,8 +210,11 @@ model OrderItem {
   modifiers      Json?
   notes          String?
   lineTotalCents Int
+  restaurantId   String
+  restaurant     Restaurant @relation(fields: [restaurantId], references: [id])
 
   @@index([orderId])
+  @@index([restaurantId])
   @@map("order_items")
 }
 
@@ -212,12 +254,15 @@ model Reservation {
   depositConfirmedAt DateTime?
   status             ReservationStatus @default(PENDING)
   createdBy          String // staff user who registered it
+  restaurantId       String
+  restaurant         Restaurant        @relation(fields: [restaurantId], references: [id])
   createdAt          DateTime          @default(now())
   updatedAt          DateTime          @updatedAt
 
   @@index([status])
   @@index([reservedFor])
   @@index([tableId])
+  @@index([restaurantId])
   @@map("reservations")
 }
 
@@ -239,47 +284,53 @@ enum PaymentStatus {
 }
 
 model Payment {
-  id          String               @id @default(uuid())
-  orderId     String
-  order       Order                @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  method      PaymentMethod        @default(CASH)
-  provider    String               @default("stripe")
-  providerRef String?              @unique // Stripe PaymentIntent id (null for CASH/CARD/TRANSFER)
-  amountCents Int
-  paidCents   Int                  @default(0) // amount physically received
-  changeCents Int                  @default(0) // change given back to customer
-  currency    String               @default("usd")
-  status      PaymentStatus        @default(REQUIRES_PAYMENT)
-  lastEventId String? // last processed webhook event id (idempotency)
-  sessionId   String?
-  session     CashRegisterSession? @relation(fields: [sessionId], references: [id])
-  rawEvent    Json?
-  createdAt   DateTime             @default(now())
-  updatedAt   DateTime             @updatedAt
+  id           String               @id @default(uuid())
+  orderId      String
+  order        Order                @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  method       PaymentMethod        @default(CASH)
+  provider     String               @default("stripe")
+  providerRef  String?              @unique // Stripe PaymentIntent id (null for CASH/CARD/TRANSFER)
+  amountCents  Int
+  paidCents    Int                  @default(0) // amount physically received
+  changeCents  Int                  @default(0) // change given back to customer
+  currency     String               @default("usd")
+  status       PaymentStatus        @default(REQUIRES_PAYMENT)
+  lastEventId  String? // last processed webhook event id (idempotency)
+  sessionId    String?
+  session      CashRegisterSession? @relation(fields: [sessionId], references: [id])
+  rawEvent     Json?
+  restaurantId String
+  restaurant   Restaurant           @relation(fields: [restaurantId], references: [id])
+  createdAt    DateTime             @default(now())
+  updatedAt    DateTime             @updatedAt
 
   @@index([orderId])
+  @@index([restaurantId])
   @@map("payments")
 }
 
 // ---------- Cash Register ----------
 
 model CashRegisterSession {
-  id                String    @id @default(uuid())
+  id                String     @id @default(uuid())
   openedById        String
-  openedBy          User      @relation("OpenedSessions", fields: [openedById], references: [id])
-  openedAt          DateTime  @default(now())
+  openedBy          User       @relation("OpenedSessions", fields: [openedById], references: [id])
+  openedAt          DateTime   @default(now())
   closedById        String?
-  closedBy          User?     @relation("ClosedSessions", fields: [closedById], references: [id])
+  closedBy          User?      @relation("ClosedSessions", fields: [closedById], references: [id])
   closedAt          DateTime?
-  openingFloatCents Int       @default(0)
+  openingFloatCents Int        @default(0)
   expectedCents     Int? // computed from sales at close
   countedCents      Int? // physically counted by cashier
   differenceCents   Int? // countedCents - expectedCents
   notes             String?
+  restaurantId      String
+  restaurant        Restaurant @relation(fields: [restaurantId], references: [id])
   payments          Payment[]
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
 
+  @@index([restaurantId])
   @@map("cash_register_sessions")
 }
 
@@ -300,10 +351,13 @@ model InventoryItem {
   lowStockThreshold Float             @default(0)
   menuItemId        String?           @unique
   menuItem          MenuItem?         @relation(fields: [menuItemId], references: [id], onDelete: SetNull)
+  restaurantId      String
+  restaurant        Restaurant        @relation(fields: [restaurantId], references: [id])
   adjustments       StockAdjustment[]
   createdAt         DateTime          @default(now())
   updatedAt         DateTime          @updatedAt
 
+  @@index([restaurantId])
   @@map("inventory_items")
 }
 
@@ -316,26 +370,32 @@ model StockAdjustment {
   reason          String?
   performedById   String
   performedBy     User           @relation(fields: [performedById], references: [id])
+  restaurantId    String
+  restaurant      Restaurant     @relation(fields: [restaurantId], references: [id])
   createdAt       DateTime       @default(now())
 
   @@index([inventoryItemId])
+  @@index([restaurantId])
   @@map("stock_adjustments")
 }
 
 // ---------- Audit ----------
 
 model AuditLog {
-  id         String   @id @default(uuid())
-  entityType String // e.g. "Order", "MenuItem", "InventoryItem"
-  entityId   String
-  action     String // e.g. "DISCOUNT_APPLIED", "PRICE_CHANGED", "STOCK_ADJUSTED"
-  userId     String
-  metadata   Json?
-  createdAt  DateTime @default(now())
+  id           String     @id @default(uuid())
+  entityType   String // e.g. "Order", "MenuItem", "InventoryItem"
+  entityId     String
+  action       String // e.g. "DISCOUNT_APPLIED", "PRICE_CHANGED", "STOCK_ADJUSTED"
+  userId       String
+  metadata     Json?
+  restaurantId String
+  restaurant   Restaurant @relation(fields: [restaurantId], references: [id])
+  createdAt    DateTime   @default(now())
 
   @@index([entityType, entityId])
   @@index([userId])
   @@index([createdAt])
+  @@index([restaurantId])
   @@map("audit_logs")
 }
 

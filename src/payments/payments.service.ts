@@ -12,6 +12,7 @@ import {
   Prisma,
   TableStatus,
 } from '@prisma/client';
+import { AuthUser } from '../auth/decorators/current-user.decorator';
 import { InventoryService } from '../inventory/inventory.service';
 import { canTransition } from '../orders/order-status';
 import { OrdersService } from '../orders/orders.service';
@@ -36,11 +37,11 @@ export class PaymentsService {
     @Inject(PAYMENT_GATEWAY) private readonly gateway: PaymentGateway,
   ) {}
 
-  async createIntent(orderId: string) {
+  async createIntent(orderId: string, user: AuthUser) {
     const order = await this.prisma.order.findUnique({
       where: { id: orderId },
     });
-    if (!order) {
+    if (!order || order.restaurantId !== user.restaurantId) {
       throw new NotFoundException('Order not found');
     }
     if (order.status !== OrderStatus.PENDING) {
@@ -67,6 +68,7 @@ export class PaymentsService {
         amountCents: order.totalCents,
         currency: order.currency,
         status: PaymentStatus.REQUIRES_PAYMENT,
+        restaurantId: user.restaurantId,
       },
     });
 
@@ -80,12 +82,12 @@ export class PaymentsService {
 
   // POS checkout: closes the order, records a payment, and attaches it to
   // the active cash register session — all in a single transaction.
-  async checkout(dto: CheckoutDto, actorId: string) {
+  async checkout(dto: CheckoutDto, user: AuthUser) {
     const order = await this.prisma.order.findUnique({
       where: { id: dto.orderId },
       include: { items: true },
     });
-    if (!order) {
+    if (!order || order.restaurantId !== user.restaurantId) {
       throw new NotFoundException('Order not found');
     }
     if (order.status !== OrderStatus.PENDING) {
@@ -95,7 +97,7 @@ export class PaymentsService {
     }
 
     const activeSession = await this.prisma.cashRegisterSession.findFirst({
-      where: { closedAt: null },
+      where: { closedAt: null, restaurantId: user.restaurantId },
       orderBy: { openedAt: 'desc' },
     });
     if (!activeSession) {
@@ -104,7 +106,11 @@ export class PaymentsService {
 
     // Idempotency: never double-charge an already-paid order.
     const existingPayment = await this.prisma.payment.findFirst({
-      where: { orderId: order.id, status: PaymentStatus.SUCCEEDED },
+      where: {
+        orderId: order.id,
+        status: PaymentStatus.SUCCEEDED,
+        restaurantId: user.restaurantId,
+      },
       include: { order: true },
     });
     if (existingPayment) {
@@ -119,7 +125,7 @@ export class PaymentsService {
       throw new BadRequestException('Insufficient payment amount');
     }
 
-    this.logger.debug(`Checkout for order ${order.id} by user ${actorId}`);
+    this.logger.debug(`Checkout for order ${order.id} by user ${user.id}`);
 
     const payment = await this.prisma.$transaction(async (tx) => {
       if (!canTransition(order.status, OrderStatus.CONFIRMED)) {
@@ -154,6 +160,7 @@ export class PaymentsService {
           currency: order.currency,
           status: PaymentStatus.SUCCEEDED,
           sessionId: activeSession.id,
+          restaurantId: user.restaurantId,
         },
         include: { order: true },
       });
@@ -161,7 +168,7 @@ export class PaymentsService {
 
     // Best-effort, non-blocking: the sale is already confirmed and paid,
     // so an inventory hiccup must never fail or roll back the checkout.
-    await this.decrementInventoryForOrder(order, actorId);
+    await this.decrementInventoryForOrder(order, user.id);
 
     return payment;
   }
@@ -180,7 +187,10 @@ export class PaymentsService {
     for (const item of order.items) {
       try {
         const inventoryItem = await this.prisma.inventoryItem.findFirst({
-          where: { menuItemId: item.menuItemId },
+          where: {
+            menuItemId: item.menuItemId,
+            restaurantId: order.restaurantId,
+          },
         });
         if (!inventoryItem) {
           continue;
@@ -194,6 +204,7 @@ export class PaymentsService {
             reason: `Sale from order ${order.number}`,
           },
           actorId,
+          order.restaurantId,
         );
       } catch (err) {
         this.logger.warn(
@@ -252,6 +263,9 @@ export class PaymentsService {
   }
 
   // Looks up the local payment record and enforces idempotency on event id.
+  // Webhook-driven (system, not a user request) — no caller AuthUser to
+  // scope by; the providerRef (Stripe's own PaymentIntent id) is already
+  // globally unique and resolves to exactly one payment/restaurant.
   private async findPaymentForEvent(event: GatewayEvent) {
     if (!event.paymentIntentId) {
       return null;

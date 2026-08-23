@@ -1,16 +1,19 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { OrderStatus, OrderType, TableStatus } from '@prisma/client';
+import { OrderStatus, OrderType, Role, TableStatus } from '@prisma/client';
 import { OrdersService } from './orders.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
+import { AuthUser } from '../auth/decorators/current-user.decorator';
 
 type MockPrisma = {
   order: {
     findUnique: jest.Mock;
     findFirst: jest.Mock;
+    findMany: jest.Mock;
     update: jest.Mock;
+    count: jest.Mock;
   };
   orderItem: {
     create: jest.Mock;
@@ -21,10 +24,12 @@ type MockPrisma = {
   };
   menuItem: {
     findUnique: jest.Mock;
+    findFirst: jest.Mock;
     findMany: jest.Mock;
   };
   table: {
     findUnique: jest.Mock;
+    findFirst: jest.Mock;
     update: jest.Mock;
   };
   $transaction: jest.Mock;
@@ -35,7 +40,9 @@ function createMockPrisma(): MockPrisma {
     order: {
       findUnique: jest.fn(),
       findFirst: jest.fn(),
+      findMany: jest.fn(),
       update: jest.fn(),
+      count: jest.fn(),
     },
     orderItem: {
       create: jest.fn(),
@@ -46,10 +53,12 @@ function createMockPrisma(): MockPrisma {
     },
     menuItem: {
       findUnique: jest.fn(),
+      findFirst: jest.fn(),
       findMany: jest.fn(),
     },
     table: {
       findUnique: jest.fn(),
+      findFirst: jest.fn(),
       update: jest.fn(),
     },
     $transaction: jest.fn(),
@@ -99,6 +108,16 @@ function createMockConfigService(): MockConfigService {
   };
 }
 
+function buildUser(overrides: Partial<AuthUser> = {}): AuthUser {
+  return {
+    id: 'user-1',
+    email: 'staff@restosync.local',
+    role: Role.WAITER,
+    restaurantId: 'restaurant-A',
+    ...overrides,
+  };
+}
+
 describe('OrdersService', () => {
   let service: OrdersService;
   let prisma: MockPrisma;
@@ -108,11 +127,13 @@ describe('OrdersService', () => {
 
   const orderId = 'order-1';
   const menuItemId = 'menu-item-1';
+  const user = buildUser();
 
   const baseOrder = {
     id: orderId,
     status: OrderStatus.DRAFT,
     type: OrderType.DINE_IN,
+    restaurantId: user.restaurantId,
   };
 
   const availableMenuItem = {
@@ -120,6 +141,7 @@ describe('OrdersService', () => {
     name: 'Classic Cheeseburger',
     priceCents: 1200,
     available: true,
+    restaurantId: user.restaurantId,
   };
 
   beforeEach(() => {
@@ -171,19 +193,29 @@ describe('OrdersService', () => {
     };
 
     it('creates a new order and sets the table OCCUPIED when the table is AVAILABLE', async () => {
-      prisma.table.findUnique.mockResolvedValue({
+      prisma.table.findFirst.mockResolvedValue({
         id: tableId,
         status: TableStatus.AVAILABLE,
       });
 
-      const result = await service.create(dto as any, 'user-1');
+      const result = await service.create(
+        dto as any,
+        user.restaurantId,
+        user.id,
+      );
 
-      expect(prisma.table.findUnique).toHaveBeenCalledWith({
-        where: { id: tableId },
+      expect(prisma.table.findFirst).toHaveBeenCalledWith({
+        where: { id: tableId, restaurantId: user.restaurantId },
+      });
+      expect(prisma.menuItem.findMany).toHaveBeenCalledWith({
+        where: { id: { in: [menuItemId] }, restaurantId: user.restaurantId },
       });
       expect(txOrderCreate).toHaveBeenCalledWith(
         expect.objectContaining({
-          data: expect.objectContaining({ tableId }),
+          data: expect.objectContaining({
+            tableId,
+            restaurantId: user.restaurantId,
+          }),
         }),
       );
       expect(txTableUpdate).toHaveBeenCalledWith({
@@ -194,7 +226,7 @@ describe('OrdersService', () => {
     });
 
     it('returns the existing active order instead of creating a duplicate when the table is OCCUPIED', async () => {
-      prisma.table.findUnique.mockResolvedValue({
+      prisma.table.findFirst.mockResolvedValue({
         id: tableId,
         status: TableStatus.OCCUPIED,
       });
@@ -205,20 +237,121 @@ describe('OrdersService', () => {
       };
       prisma.order.findFirst.mockResolvedValue(existingOrder);
 
-      const result = await service.create(dto as any, 'user-1');
+      const result = await service.create(
+        dto as any,
+        user.restaurantId,
+        user.id,
+      );
 
       expect(result).toBe(existingOrder);
+      expect(prisma.order.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ restaurantId: user.restaurantId }),
+        }),
+      );
       expect(prisma.$transaction).not.toHaveBeenCalled();
       expect(txOrderCreate).not.toHaveBeenCalled();
     });
 
     it('throws NotFoundException for a nonexistent tableId', async () => {
-      prisma.table.findUnique.mockResolvedValue(null);
+      prisma.table.findFirst.mockResolvedValue(null);
 
-      await expect(service.create(dto as any, 'user-1')).rejects.toThrow(
+      await expect(
+        service.create(dto as any, user.restaurantId, user.id),
+      ).rejects.toThrow(NotFoundException);
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('throws NotFoundException (not the table) for a tableId belonging to another restaurant', async () => {
+      // findFirst is itself scoped by restaurantId, so a table owned by a
+      // different restaurant is invisible here — same as a nonexistent id.
+      prisma.table.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.create(dto as any, user.restaurantId, user.id),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it("always uses the restaurantId passed by the controller (the caller's own), never a client-suppliable value", async () => {
+      prisma.table.findFirst.mockResolvedValue({
+        id: tableId,
+        status: TableStatus.AVAILABLE,
+      });
+
+      await service.create(dto as any, 'restaurant-B', user.id);
+
+      const { data } = txOrderCreate.mock.calls[0][0];
+      expect(data.restaurantId).toBe('restaurant-B');
+      expect(data.items.create[0].restaurantId).toBe('restaurant-B');
+    });
+  });
+
+  describe('findAll', () => {
+    it('scopes results to the caller restaurantId', async () => {
+      prisma.$transaction.mockResolvedValue([[], 0]);
+
+      await service.findAll({ page: 1, limit: 20 } as any, user);
+
+      const [[findManyArgs], countArgs] = [
+        prisma.order.findMany.mock.calls,
+        undefined,
+      ];
+      expect(prisma.order.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ restaurantId: user.restaurantId }),
+        }),
+      );
+      void findManyArgs;
+      void countArgs;
+    });
+
+    it('CUSTOMER role additionally scopes by customerId, ON TOP OF restaurantId', async () => {
+      prisma.$transaction.mockResolvedValue([[], 0]);
+      const customer = buildUser({ id: 'customer-1', role: Role.CUSTOMER });
+
+      await service.findAll({ page: 1, limit: 20 } as any, customer);
+
+      expect(prisma.order.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            restaurantId: customer.restaurantId,
+            customerId: customer.id,
+          },
+        }),
+      );
+    });
+  });
+
+  describe('findOne', () => {
+    it('returns the order when it belongs to the caller restaurant', async () => {
+      prisma.order.findUnique.mockResolvedValue({
+        ...baseOrder,
+        customerId: null,
+      });
+
+      const result = await service.findOne(orderId, user);
+
+      expect(result.id).toBe(orderId);
+    });
+
+    it('throws NotFoundException if the order does not exist', async () => {
+      prisma.order.findUnique.mockResolvedValue(null);
+
+      await expect(service.findOne(orderId, user)).rejects.toThrow(
         NotFoundException,
       );
-      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('throws NotFoundException (404, NOT 403) for an order belonging to another restaurant', async () => {
+      prisma.order.findUnique.mockResolvedValue({
+        ...baseOrder,
+        restaurantId: 'restaurant-B',
+        customerId: null,
+      });
+
+      await expect(service.findOne(orderId, user)).rejects.toThrow(
+        NotFoundException,
+      );
     });
   });
 
@@ -233,7 +366,7 @@ describe('OrdersService', () => {
         status: OrderStatus.CONFIRMED,
       });
 
-      await service.updateStatus(orderId, OrderStatus.CONFIRMED);
+      await service.updateStatus(orderId, OrderStatus.CONFIRMED, user);
 
       expect(realtimeGateway.emitStatusChanged).toHaveBeenCalledWith({
         orderId,
@@ -255,7 +388,11 @@ describe('OrdersService', () => {
         throw new Error('socket server unavailable');
       });
 
-      const result = await service.updateStatus(orderId, OrderStatus.CONFIRMED);
+      const result = await service.updateStatus(
+        orderId,
+        OrderStatus.CONFIRMED,
+        user,
+      );
 
       expect(result.status).toBe(OrderStatus.CONFIRMED);
       expect(realtimeGateway.emitStatusChanged).toHaveBeenCalled();
@@ -268,7 +405,7 @@ describe('OrdersService', () => {
       });
 
       await expect(
-        service.updateStatus(orderId, OrderStatus.CONFIRMED),
+        service.updateStatus(orderId, OrderStatus.CONFIRMED, user),
       ).rejects.toThrow(BadRequestException);
       expect(realtimeGateway.emitStatusChanged).not.toHaveBeenCalled();
     });
@@ -277,15 +414,28 @@ describe('OrdersService', () => {
       prisma.order.findUnique.mockResolvedValue(null);
 
       await expect(
-        service.updateStatus(orderId, OrderStatus.CONFIRMED),
+        service.updateStatus(orderId, OrderStatus.CONFIRMED, user),
       ).rejects.toThrow(NotFoundException);
+    });
+
+    it('throws NotFoundException (404, NOT 403) for an order belonging to another restaurant', async () => {
+      prisma.order.findUnique.mockResolvedValue({
+        ...baseOrder,
+        restaurantId: 'restaurant-B',
+        status: OrderStatus.PENDING,
+      });
+
+      await expect(
+        service.updateStatus(orderId, OrderStatus.CONFIRMED, user),
+      ).rejects.toThrow(NotFoundException);
+      expect(prisma.order.update).not.toHaveBeenCalled();
     });
   });
 
   describe('addItem', () => {
     it('adds an item with the correct price/name snapshot and recalculates totals', async () => {
       prisma.order.findUnique.mockResolvedValue(baseOrder);
-      prisma.menuItem.findUnique.mockResolvedValue(availableMenuItem);
+      prisma.menuItem.findFirst.mockResolvedValue(availableMenuItem);
       prisma.orderItem.create.mockResolvedValue({});
       prisma.orderItem.findMany.mockResolvedValue([
         {
@@ -300,11 +450,15 @@ describe('OrdersService', () => {
         totalCents: 2400,
       });
 
-      const result = await service.addItem(orderId, {
-        menuItemId,
-        quantity: 2,
-      });
+      const result = await service.addItem(
+        orderId,
+        { menuItemId, quantity: 2 },
+        user,
+      );
 
+      expect(prisma.menuItem.findFirst).toHaveBeenCalledWith({
+        where: { id: menuItemId, restaurantId: user.restaurantId },
+      });
       expect(prisma.orderItem.create).toHaveBeenCalledWith({
         data: expect.objectContaining({
           orderId,
@@ -313,6 +467,7 @@ describe('OrdersService', () => {
           priceCents: availableMenuItem.priceCents,
           quantity: 2,
           lineTotalCents: 2400,
+          restaurantId: user.restaurantId,
         }),
       });
       expect(prisma.order.update).toHaveBeenCalledWith(
@@ -326,7 +481,7 @@ describe('OrdersService', () => {
 
     it('emits order.totals_changed with the correct payload via recalculateTotals', async () => {
       prisma.order.findUnique.mockResolvedValue(baseOrder);
-      prisma.menuItem.findUnique.mockResolvedValue(availableMenuItem);
+      prisma.menuItem.findFirst.mockResolvedValue(availableMenuItem);
       prisma.orderItem.create.mockResolvedValue({});
       prisma.orderItem.findMany.mockResolvedValue([
         { priceCents: 1200, quantity: 2 },
@@ -338,7 +493,7 @@ describe('OrdersService', () => {
         totalCents: 2400,
       });
 
-      await service.addItem(orderId, { menuItemId, quantity: 2 });
+      await service.addItem(orderId, { menuItemId, quantity: 2 }, user);
 
       expect(realtimeGateway.emitTotalsChanged).toHaveBeenCalledWith({
         orderId,
@@ -351,7 +506,7 @@ describe('OrdersService', () => {
 
     it('still completes the operation when the gateway emit throws', async () => {
       prisma.order.findUnique.mockResolvedValue(baseOrder);
-      prisma.menuItem.findUnique.mockResolvedValue(availableMenuItem);
+      prisma.menuItem.findFirst.mockResolvedValue(availableMenuItem);
       prisma.orderItem.create.mockResolvedValue({});
       prisma.orderItem.findMany.mockResolvedValue([
         { priceCents: 1200, quantity: 2 },
@@ -366,10 +521,11 @@ describe('OrdersService', () => {
         throw new Error('socket server unavailable');
       });
 
-      const result = await service.addItem(orderId, {
-        menuItemId,
-        quantity: 2,
-      });
+      const result = await service.addItem(
+        orderId,
+        { menuItemId, quantity: 2 },
+        user,
+      );
 
       expect(result.totalCents).toBe(2400);
       expect(realtimeGateway.emitTotalsChanged).toHaveBeenCalled();
@@ -379,7 +535,18 @@ describe('OrdersService', () => {
       prisma.order.findUnique.mockResolvedValue(null);
 
       await expect(
-        service.addItem(orderId, { menuItemId, quantity: 1 }),
+        service.addItem(orderId, { menuItemId, quantity: 1 }, user),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('throws NotFoundException (404, NOT 403) if the order belongs to another restaurant', async () => {
+      prisma.order.findUnique.mockResolvedValue({
+        ...baseOrder,
+        restaurantId: 'restaurant-B',
+      });
+
+      await expect(
+        service.addItem(orderId, { menuItemId, quantity: 1 }, user),
       ).rejects.toThrow(NotFoundException);
     });
 
@@ -390,28 +557,28 @@ describe('OrdersService', () => {
       });
 
       await expect(
-        service.addItem(orderId, { menuItemId, quantity: 1 }),
+        service.addItem(orderId, { menuItemId, quantity: 1 }, user),
       ).rejects.toThrow(BadRequestException);
     });
 
     it('throws NotFoundException if the menu item does not exist', async () => {
       prisma.order.findUnique.mockResolvedValue(baseOrder);
-      prisma.menuItem.findUnique.mockResolvedValue(null);
+      prisma.menuItem.findFirst.mockResolvedValue(null);
 
       await expect(
-        service.addItem(orderId, { menuItemId, quantity: 1 }),
+        service.addItem(orderId, { menuItemId, quantity: 1 }, user),
       ).rejects.toThrow(NotFoundException);
     });
 
     it('throws NotFoundException if the menu item is not available', async () => {
       prisma.order.findUnique.mockResolvedValue(baseOrder);
-      prisma.menuItem.findUnique.mockResolvedValue({
+      prisma.menuItem.findFirst.mockResolvedValue({
         ...availableMenuItem,
         available: false,
       });
 
       await expect(
-        service.addItem(orderId, { menuItemId, quantity: 1 }),
+        service.addItem(orderId, { menuItemId, quantity: 1 }, user),
       ).rejects.toThrow(NotFoundException);
     });
   });
@@ -438,10 +605,20 @@ describe('OrdersService', () => {
         totalCents: 3600,
       });
 
-      const result = await service.updateItemQuantity(orderId, orderItemId, {
-        quantity: 3,
-      });
+      const result = await service.updateItemQuantity(
+        orderId,
+        orderItemId,
+        { quantity: 3 },
+        user,
+      );
 
+      expect(prisma.orderItem.findFirst).toHaveBeenCalledWith({
+        where: {
+          id: orderItemId,
+          orderId,
+          restaurantId: user.restaurantId,
+        },
+      });
       expect(prisma.orderItem.update).toHaveBeenCalledWith({
         where: { id: orderItemId },
         data: { quantity: 3, lineTotalCents: 3600 },
@@ -456,7 +633,7 @@ describe('OrdersService', () => {
       });
 
       await expect(
-        service.updateItemQuantity(orderId, orderItemId, { quantity: 2 }),
+        service.updateItemQuantity(orderId, orderItemId, { quantity: 2 }, user),
       ).rejects.toThrow(BadRequestException);
     });
 
@@ -465,7 +642,18 @@ describe('OrdersService', () => {
       prisma.orderItem.findFirst.mockResolvedValue(null);
 
       await expect(
-        service.updateItemQuantity(orderId, orderItemId, { quantity: 2 }),
+        service.updateItemQuantity(orderId, orderItemId, { quantity: 2 }, user),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('throws NotFoundException (404, NOT 403) if the order belongs to another restaurant', async () => {
+      prisma.order.findUnique.mockResolvedValue({
+        ...baseOrder,
+        restaurantId: 'restaurant-B',
+      });
+
+      await expect(
+        service.updateItemQuantity(orderId, orderItemId, { quantity: 2 }, user),
       ).rejects.toThrow(NotFoundException);
     });
   });
@@ -490,7 +678,7 @@ describe('OrdersService', () => {
         totalCents: 0,
       });
 
-      const result = await service.removeItem(orderId, orderItemId);
+      const result = await service.removeItem(orderId, orderItemId, user);
 
       expect(prisma.orderItem.delete).toHaveBeenCalledWith({
         where: { id: orderItemId },
@@ -504,18 +692,29 @@ describe('OrdersService', () => {
         status: OrderStatus.CANCELLED,
       });
 
-      await expect(service.removeItem(orderId, orderItemId)).rejects.toThrow(
-        BadRequestException,
-      );
+      await expect(
+        service.removeItem(orderId, orderItemId, user),
+      ).rejects.toThrow(BadRequestException);
     });
 
     it('throws NotFoundException if the order item is not found', async () => {
       prisma.order.findUnique.mockResolvedValue(baseOrder);
       prisma.orderItem.findFirst.mockResolvedValue(null);
 
-      await expect(service.removeItem(orderId, orderItemId)).rejects.toThrow(
-        NotFoundException,
-      );
+      await expect(
+        service.removeItem(orderId, orderItemId, user),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('throws NotFoundException (404, NOT 403) if the order belongs to another restaurant', async () => {
+      prisma.order.findUnique.mockResolvedValue({
+        ...baseOrder,
+        restaurantId: 'restaurant-B',
+      });
+
+      await expect(
+        service.removeItem(orderId, orderItemId, user),
+      ).rejects.toThrow(NotFoundException);
     });
   });
 
@@ -531,7 +730,7 @@ describe('OrdersService', () => {
         status: OrderStatus.PENDING,
       });
 
-      const result = await service.confirmOrder(orderId);
+      const result = await service.confirmOrder(orderId, user);
 
       expect(prisma.order.update).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -549,7 +748,7 @@ describe('OrdersService', () => {
         items: [],
       });
 
-      await expect(service.confirmOrder(orderId)).rejects.toThrow(
+      await expect(service.confirmOrder(orderId, user)).rejects.toThrow(
         BadRequestException,
       );
     });
@@ -557,14 +756,74 @@ describe('OrdersService', () => {
     it('throws NotFoundException if the order does not exist', async () => {
       prisma.order.findUnique.mockResolvedValue(null);
 
-      await expect(service.confirmOrder(orderId)).rejects.toThrow(
+      await expect(service.confirmOrder(orderId, user)).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it('throws NotFoundException (404, NOT 403) if the order belongs to another restaurant', async () => {
+      prisma.order.findUnique.mockResolvedValue({
+        ...baseOrder,
+        restaurantId: 'restaurant-B',
+        status: OrderStatus.DRAFT,
+        items: [{ id: 'item-1' }],
+      });
+
+      await expect(service.confirmOrder(orderId, user)).rejects.toThrow(
         NotFoundException,
       );
     });
   });
 
+  describe('applyDiscount', () => {
+    it('applies the discount and records the audit log with the caller restaurantId', async () => {
+      prisma.order.findUnique.mockResolvedValue(baseOrder);
+      prisma.orderItem.findMany.mockResolvedValue([
+        { priceCents: 1000, quantity: 1 },
+      ]);
+      prisma.order.update.mockResolvedValue({
+        ...baseOrder,
+        subtotalCents: 1000,
+        taxCents: 0,
+        totalCents: 900,
+        discountCents: 100,
+      });
+
+      await service.applyDiscount(
+        orderId,
+        { discountType: 'FIXED' as any, discountCents: 100 },
+        user,
+      );
+
+      expect(auditService.log).toHaveBeenCalledWith(
+        expect.objectContaining({
+          entityType: 'Order',
+          entityId: orderId,
+          userId: user.id,
+          restaurantId: user.restaurantId,
+        }),
+      );
+    });
+
+    it('throws NotFoundException (404, NOT 403) if the order belongs to another restaurant', async () => {
+      prisma.order.findUnique.mockResolvedValue({
+        ...baseOrder,
+        restaurantId: 'restaurant-B',
+      });
+
+      await expect(
+        service.applyDiscount(
+          orderId,
+          { discountType: 'FIXED' as any, discountCents: 100 },
+          user,
+        ),
+      ).rejects.toThrow(NotFoundException);
+      expect(auditService.log).not.toHaveBeenCalled();
+    });
+  });
+
   describe('recalculateTotals', () => {
-    it('computes subtotalCents/taxCents/totalCents from the order items', async () => {
+    it('computes subtotalCents/taxCents/totalCents from the order items, scoped by restaurantId', async () => {
       prisma.orderItem.findMany.mockResolvedValue([
         { priceCents: 1200, quantity: 2 },
         { priceCents: 500, quantity: 1 },
@@ -573,8 +832,14 @@ describe('OrdersService', () => {
         Promise.resolve({ ...baseOrder, ...data }),
       );
 
-      const result = await (service as any).recalculateTotals(orderId);
+      const result = await (service as any).recalculateTotals(
+        orderId,
+        user.restaurantId,
+      );
 
+      expect(prisma.orderItem.findMany).toHaveBeenCalledWith({
+        where: { orderId, restaurantId: user.restaurantId },
+      });
       expect(prisma.order.update).toHaveBeenCalledWith({
         where: { id: orderId },
         data: { subtotalCents: 2900, taxCents: 0, totalCents: 2900 },
@@ -590,7 +855,10 @@ describe('OrdersService', () => {
         Promise.resolve({ ...baseOrder, ...data }),
       );
 
-      const result = await (service as any).recalculateTotals(orderId);
+      const result = await (service as any).recalculateTotals(
+        orderId,
+        user.restaurantId,
+      );
 
       expect(result.subtotalCents).toBe(0);
       expect(result.taxCents).toBe(0);
@@ -608,7 +876,10 @@ describe('OrdersService', () => {
         Promise.resolve({ ...baseOrder, ...data }),
       );
 
-      const result = await (service as any).recalculateTotals(orderId);
+      const result = await (service as any).recalculateTotals(
+        orderId,
+        user.restaurantId,
+      );
 
       expect(config.get).toHaveBeenCalledWith('tax.rate');
       // 1000 * 0.18 = 180
@@ -628,7 +899,10 @@ describe('OrdersService', () => {
         Promise.resolve({ ...baseOrder, ...data }),
       );
 
-      const result = await (service as any).recalculateTotals(orderId);
+      const result = await (service as any).recalculateTotals(
+        orderId,
+        user.restaurantId,
+      );
 
       expect(result.taxCents).toBe(0);
       expect(result.totalCents).toBe(1000);
@@ -647,7 +921,10 @@ describe('OrdersService', () => {
         Promise.resolve({ ...baseOrder, ...data }),
       );
 
-      const result = await (service as any).recalculateTotals(orderId);
+      const result = await (service as any).recalculateTotals(
+        orderId,
+        user.restaurantId,
+      );
 
       expect(result.subtotalCents + result.taxCents).toBe(result.totalCents);
     });

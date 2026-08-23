@@ -14,7 +14,10 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { Role } from '@prisma/client';
-import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import {
+  AuthUser,
+  CurrentUser,
+} from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { AdjustStockDto } from './dto/adjust-stock.dto';
 import { CreateInventoryItemDto } from './dto/create-inventory-item.dto';
@@ -30,8 +33,8 @@ export class InventoryController {
   @Get()
   @ApiOperation({ summary: 'List all inventory items' })
   @ApiResponse({ status: 200, description: 'List of inventory items' })
-  findAll() {
-    return this.inventoryService.findAll();
+  findAll(@CurrentUser() user: AuthUser) {
+    return this.inventoryService.findAll(user);
   }
 
   @Get('low-stock')
@@ -43,24 +46,24 @@ export class InventoryController {
     status: 200,
     description: 'Items where quantityOnHand <= lowStockThreshold',
   })
-  findLowStock() {
-    return this.inventoryService.findLowStock();
+  findLowStock(@CurrentUser() user: AuthUser) {
+    return this.inventoryService.findLowStock(user);
   }
 
   @Get(':id')
   @ApiOperation({ summary: 'Get a single inventory item' })
   @ApiResponse({ status: 200, description: 'Inventory item details' })
   @ApiResponse({ status: 404, description: 'Item not found' })
-  findOne(@Param('id') id: string) {
-    return this.inventoryService.findOne(id);
+  findOne(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+    return this.inventoryService.findOne(id, user);
   }
 
   @Post()
   @ApiOperation({ summary: 'Create a new inventory item' })
   @ApiResponse({ status: 201, description: 'Inventory item created' })
   @ApiResponse({ status: 400, description: 'Validation error' })
-  create(@Body() dto: CreateInventoryItemDto) {
-    return this.inventoryService.create(dto);
+  create(@Body() dto: CreateInventoryItemDto, @CurrentUser() user: AuthUser) {
+    return this.inventoryService.create(dto, user);
   }
 
   @Patch(':id')
@@ -70,16 +73,17 @@ export class InventoryController {
   update(
     @Param('id') id: string,
     @Body() dto: Partial<CreateInventoryItemDto>,
+    @CurrentUser() user: AuthUser,
   ) {
-    return this.inventoryService.update(id, dto);
+    return this.inventoryService.update(id, dto, user);
   }
 
   @Delete(':id')
   @ApiOperation({ summary: 'Delete an inventory item' })
   @ApiResponse({ status: 200, description: 'Inventory item deleted' })
   @ApiResponse({ status: 404, description: 'Item not found' })
-  remove(@Param('id') id: string) {
-    return this.inventoryService.remove(id);
+  remove(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+    return this.inventoryService.remove(id, user);
   }
 
   @Post(':id/adjust')
@@ -89,8 +93,8 @@ export class InventoryController {
   adjust(
     @Param('id') id: string,
     @Body() dto: AdjustStockDto,
-    @CurrentUser('id') userId: string,
+    @CurrentUser() user: AuthUser,
   ) {
-    return this.inventoryService.adjust(id, dto, userId);
+    return this.inventoryService.adjust(id, dto, user.id, user.restaurantId);
   }
 }

@@ -3,8 +3,10 @@ import {
   OrderStatus,
   PaymentMethod,
   PaymentStatus,
+  Role,
   TableStatus,
 } from '@prisma/client';
+import { AuthUser } from '../auth/decorators/current-user.decorator';
 import { InventoryService } from '../inventory/inventory.service';
 import { OrdersService } from '../orders/orders.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -20,6 +22,7 @@ type MockPrisma = {
   };
   payment: {
     findFirst: jest.Mock;
+    upsert: jest.Mock;
   };
   inventoryItem: {
     findFirst: jest.Mock;
@@ -40,6 +43,7 @@ function createMockPrisma(): MockPrisma {
     },
     payment: {
       findFirst: jest.fn(),
+      upsert: jest.fn(),
     },
     inventoryItem: {
       findFirst: jest.fn(),
@@ -48,6 +52,16 @@ function createMockPrisma(): MockPrisma {
       update: jest.fn(),
     },
     $transaction: jest.fn(),
+  };
+}
+
+function buildUser(overrides: Partial<AuthUser> = {}): AuthUser {
+  return {
+    id: 'user-1',
+    email: 'staff@restosync.local',
+    role: Role.STAFF,
+    restaurantId: 'restaurant-A',
+    ...overrides,
   };
 }
 
@@ -61,7 +75,7 @@ describe('PaymentsService', () => {
 
   const orderId = 'order-1';
   const sessionId = 'session-1';
-  const actorId = 'user-1';
+  const user = buildUser();
 
   const baseOrder = {
     id: orderId,
@@ -69,6 +83,7 @@ describe('PaymentsService', () => {
     status: OrderStatus.PENDING,
     totalCents: 1200,
     currency: 'usd',
+    restaurantId: user.restaurantId,
     items: [
       {
         id: 'item-1',
@@ -108,8 +123,41 @@ describe('PaymentsService', () => {
     );
   });
 
+  describe('createIntent', () => {
+    it('throws NotFoundException (not the order) for an order belonging to another restaurant', async () => {
+      prisma.order.findUnique.mockResolvedValue({
+        ...baseOrder,
+        restaurantId: 'restaurant-B',
+      });
+
+      await expect(service.createIntent(orderId, user)).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it('sets restaurantId from the caller, never from the client, on the created payment', async () => {
+      prisma.order.findUnique.mockResolvedValue(baseOrder);
+      const gateway: PaymentGateway = {
+        createPaymentIntent: jest
+          .fn()
+          .mockResolvedValue({ id: 'pi_123', clientSecret: 'secret' }),
+      } as unknown as PaymentGateway;
+      service = new PaymentsService(
+        prisma as unknown as PrismaService,
+        {} as unknown as OrdersService,
+        inventoryService as unknown as InventoryService,
+        gateway,
+      );
+
+      await service.createIntent(orderId, user);
+
+      const { create } = prisma.payment.upsert.mock.calls[0][0];
+      expect(create.restaurantId).toBe(user.restaurantId);
+    });
+  });
+
   describe('checkout', () => {
-    it('creates a CASH payment with correct method and amountCents', async () => {
+    it('creates a CASH payment with correct method and amountCents, scoped to the caller restaurant', async () => {
       prisma.order.findUnique.mockResolvedValue(baseOrder);
       prisma.cashRegisterSession.findFirst.mockResolvedValue(activeSession);
       prisma.payment.findFirst.mockResolvedValue(null);
@@ -120,9 +168,13 @@ describe('PaymentsService', () => {
           method: PaymentMethod.CASH,
           amountPaidCents: 1200,
         },
-        actorId,
+        user,
       );
 
+      expect(prisma.cashRegisterSession.findFirst).toHaveBeenCalledWith({
+        where: { closedAt: null, restaurantId: user.restaurantId },
+        orderBy: { openedAt: 'desc' },
+      });
       expect(txOrderUpdate).toHaveBeenCalledWith({
         where: { id: orderId },
         data: { status: OrderStatus.CONFIRMED },
@@ -138,9 +190,30 @@ describe('PaymentsService', () => {
             status: PaymentStatus.SUCCEEDED,
             sessionId: activeSession.id,
             providerRef: null,
+            restaurantId: user.restaurantId,
           }),
         }),
       );
+    });
+
+    it("ignores a client-supplied restaurantId and always uses the caller's own", async () => {
+      prisma.order.findUnique.mockResolvedValue(baseOrder);
+      prisma.cashRegisterSession.findFirst.mockResolvedValue(activeSession);
+      prisma.payment.findFirst.mockResolvedValue(null);
+
+      await service.checkout(
+        {
+          orderId,
+          method: PaymentMethod.CASH,
+          amountPaidCents: 1200,
+          // @ts-expect-error simulating a malicious/naive client payload
+          restaurantId: 'restaurant-EVIL',
+        },
+        user,
+      );
+
+      const { data } = txPaymentCreate.mock.calls[0][0];
+      expect(data.restaurantId).toBe(user.restaurantId);
     });
 
     it('sets the table back to AVAILABLE after successful payment', async () => {
@@ -155,7 +228,7 @@ describe('PaymentsService', () => {
           method: PaymentMethod.CASH,
           amountPaidCents: 1200,
         },
-        actorId,
+        user,
       );
 
       expect(txTableUpdate).toHaveBeenCalledWith({
@@ -175,7 +248,7 @@ describe('PaymentsService', () => {
           method: PaymentMethod.CASH,
           amountPaidCents: 1200,
         },
-        actorId,
+        user,
       );
 
       expect(txTableUpdate).not.toHaveBeenCalled();
@@ -192,7 +265,7 @@ describe('PaymentsService', () => {
           method: PaymentMethod.CASH,
           amountPaidCents: 1500,
         },
-        actorId,
+        user,
       );
 
       expect(txPaymentCreate).toHaveBeenCalledWith(
@@ -214,7 +287,7 @@ describe('PaymentsService', () => {
       await expect(
         service.checkout(
           { orderId, method: PaymentMethod.CASH, amountPaidCents: 1200 },
-          actorId,
+          user,
         ),
       ).rejects.toThrow(BadRequestException);
     });
@@ -225,9 +298,24 @@ describe('PaymentsService', () => {
       await expect(
         service.checkout(
           { orderId, method: PaymentMethod.CASH, amountPaidCents: 1200 },
-          actorId,
+          user,
         ),
       ).rejects.toThrow(NotFoundException);
+    });
+
+    it('throws NotFoundException (not the order, not 403) for an order belonging to another restaurant', async () => {
+      prisma.order.findUnique.mockResolvedValue({
+        ...baseOrder,
+        restaurantId: 'restaurant-B',
+      });
+
+      await expect(
+        service.checkout(
+          { orderId, method: PaymentMethod.CASH, amountPaidCents: 1200 },
+          user,
+        ),
+      ).rejects.toThrow(NotFoundException);
+      expect(prisma.cashRegisterSession.findFirst).not.toHaveBeenCalled();
     });
 
     it('throws BadRequestException if no active session', async () => {
@@ -237,7 +325,7 @@ describe('PaymentsService', () => {
       await expect(
         service.checkout(
           { orderId, method: PaymentMethod.CASH, amountPaidCents: 1200 },
-          actorId,
+          user,
         ),
       ).rejects.toThrow(BadRequestException);
     });
@@ -250,7 +338,7 @@ describe('PaymentsService', () => {
       await expect(
         service.checkout(
           { orderId, method: PaymentMethod.CASH, amountPaidCents: 1000 },
-          actorId,
+          user,
         ),
       ).rejects.toThrow(BadRequestException);
       expect(prisma.$transaction).not.toHaveBeenCalled();
@@ -269,7 +357,7 @@ describe('PaymentsService', () => {
 
       const result = await service.checkout(
         { orderId, method: PaymentMethod.CASH, amountPaidCents: 1200 },
-        actorId,
+        user,
       );
 
       expect(result).toBe(existingPayment);
@@ -284,7 +372,7 @@ describe('PaymentsService', () => {
       await expect(
         service.checkout(
           { orderId, method: PaymentMethod.CARD, amountPaidCents: 0 },
-          actorId,
+          user,
         ),
       ).resolves.toBeDefined();
 
@@ -300,7 +388,7 @@ describe('PaymentsService', () => {
     });
 
     describe('inventory decrement hook (#51)', () => {
-      it('decrements linked inventory by the correct quantity', async () => {
+      it('decrements linked inventory by the correct quantity, scoped by the order restaurantId', async () => {
         prisma.order.findUnique.mockResolvedValue(baseOrder);
         prisma.cashRegisterSession.findFirst.mockResolvedValue(activeSession);
         prisma.payment.findFirst.mockResolvedValue(null);
@@ -311,11 +399,14 @@ describe('PaymentsService', () => {
 
         await service.checkout(
           { orderId, method: PaymentMethod.CASH, amountPaidCents: 1200 },
-          actorId,
+          user,
         );
 
         expect(prisma.inventoryItem.findFirst).toHaveBeenCalledWith({
-          where: { menuItemId: 'menu-item-1' },
+          where: {
+            menuItemId: 'menu-item-1',
+            restaurantId: baseOrder.restaurantId,
+          },
         });
         expect(inventoryService.adjust).toHaveBeenCalledWith(
           'inv-item-1',
@@ -324,7 +415,8 @@ describe('PaymentsService', () => {
             quantityDelta: -2,
             reason: `Sale from order ${baseOrder.number}`,
           },
-          actorId,
+          user.id,
+          baseOrder.restaurantId,
         );
       });
 
@@ -337,7 +429,7 @@ describe('PaymentsService', () => {
         await expect(
           service.checkout(
             { orderId, method: PaymentMethod.CASH, amountPaidCents: 1200 },
-            actorId,
+            user,
           ),
         ).resolves.toBeDefined();
 
@@ -356,7 +448,7 @@ describe('PaymentsService', () => {
 
         const result = await service.checkout(
           { orderId, method: PaymentMethod.CASH, amountPaidCents: 1200 },
-          actorId,
+          user,
         );
 
         expect(result).toEqual({ id: 'payment-1' });

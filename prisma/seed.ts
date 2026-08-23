@@ -4,6 +4,18 @@ import * as bcrypt from 'bcryptjs';
 const prisma = new PrismaClient();
 
 async function main() {
+  // All demo data belongs to a single default restaurant. Reuses the same
+  // row the #149 backfill script creates if it already ran.
+  const restaurant = await prisma.restaurant.upsert({
+    where: { id: '00000000-0000-4000-8000-000000000001' },
+    update: {},
+    create: {
+      id: '00000000-0000-4000-8000-000000000001',
+      name: 'El Buen Filo',
+      timezone: 'America/Lima',
+    },
+  });
+
   const adminEmail = 'admin@restosync.local';
   const passwordHash = await bcrypt.hash('Admin123!', 10);
 
@@ -16,6 +28,7 @@ async function main() {
       firstName: 'Resto',
       lastName: 'Admin',
       role: Role.ADMIN,
+      restaurantId: restaurant.id,
     },
   });
 
@@ -27,6 +40,7 @@ async function main() {
       id: categoryId,
       name: 'Burgers',
       sortOrder: 1,
+      restaurantId: restaurant.id,
     },
   });
 
@@ -39,6 +53,7 @@ async function main() {
       description: 'Beef patty, cheddar, lettuce, tomato',
       priceCents: 1200,
       categoryId: category.id,
+      restaurantId: restaurant.id,
     },
   });
 
@@ -53,6 +68,7 @@ async function main() {
       firstName: 'Regina',
       lastName: 'Cashier',
       role: Role.CASHIER,
+      restaurantId: restaurant.id,
     },
   });
 
@@ -67,6 +83,7 @@ async function main() {
       firstName: 'Walter',
       lastName: 'Waiter',
       role: Role.WAITER,
+      restaurantId: restaurant.id,
     },
   });
 
@@ -81,6 +98,7 @@ async function main() {
       firstName: 'Manuel',
       lastName: 'Manager',
       role: Role.MANAGER,
+      restaurantId: restaurant.id,
     },
   });
 
@@ -102,7 +120,7 @@ async function main() {
     await prisma.category.upsert({
       where: { id: cat.id },
       update: { name: cat.name, sortOrder: cat.sortOrder },
-      create: cat,
+      create: { ...cat, restaurantId: restaurant.id },
     });
   }
 
@@ -130,7 +148,7 @@ async function main() {
     await prisma.menuItem.upsert({
       where: { id: item.id },
       update: { name: item.name, priceCents: item.priceCents, categoryId: item.categoryId },
-      create: item,
+      create: { ...item, restaurantId: restaurant.id },
     });
   }
 
@@ -143,6 +161,7 @@ async function main() {
       id: '55555555-5555-4555-8555-555555555501',
       name: 'Mesa 1',
       capacity: 4,
+      restaurantId: restaurant.id,
     },
   });
 
@@ -189,6 +208,7 @@ async function main() {
         status: demo.status,
         tableId: demo.tableId,
         customerId: admin.id,
+        restaurantId: restaurant.id,
       },
     });
 
@@ -201,6 +221,7 @@ async function main() {
         priceCents: menuItem.priceCents,
         quantity: di.quantity,
         lineTotalCents: menuItem.priceCents * di.quantity,
+        restaurantId: restaurant.id,
       };
     });
 

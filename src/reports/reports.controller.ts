@@ -7,6 +7,10 @@ import {
 } from '@nestjs/swagger';
 import { Role } from '@prisma/client';
 import type { Response } from 'express';
+import {
+  AuthUser,
+  CurrentUser,
+} from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { toCsv } from '../common/utils/csv';
 import { DateQueryDto } from './dto/date-query.dto';
@@ -50,8 +54,12 @@ export class ReportsController {
   async getDailySummary(
     @Query() query: DateQueryDto,
     @Res({ passthrough: true }) res: Response,
+    @CurrentUser() user: AuthUser,
   ) {
-    const result = await this.reportsService.getDailySummary(query.date);
+    const result = await this.reportsService.getDailySummary(
+      query.date,
+      user.restaurantId,
+    );
 
     if (query.format === 'csv') {
       sendCsv(res, `daily-summary-${query.date}.csv`, [result]);
@@ -67,9 +75,11 @@ export class ReportsController {
   async getPaymentMethodBreakdown(
     @Query() query: DateQueryDto,
     @Res({ passthrough: true }) res: Response,
+    @CurrentUser() user: AuthUser,
   ) {
     const result = await this.reportsService.getPaymentMethodBreakdown(
       query.date,
+      user.restaurantId,
     );
 
     if (query.format === 'csv') {
@@ -94,9 +104,11 @@ export class ReportsController {
   async getBestSellingProducts(
     @Query() query: DateQueryDto,
     @Res({ passthrough: true }) res: Response,
+    @CurrentUser() user: AuthUser,
   ) {
     const result = await this.reportsService.getBestSellingProducts(
       query.date,
+      user.restaurantId,
       query.limit ?? 10,
     );
 
@@ -119,10 +131,12 @@ export class ReportsController {
   async getClosedTickets(
     @Query() query: DateRangeQueryDto,
     @Res({ passthrough: true }) res: Response,
+    @CurrentUser() user: AuthUser,
   ) {
     const result = await this.reportsService.getClosedTickets(
       query.startDate,
       query.endDate,
+      user.restaurantId,
     );
 
     if (query.format === 'csv') {
@@ -147,10 +161,12 @@ export class ReportsController {
   async getDailySummaryRange(
     @Query() query: DateRangeQueryDto,
     @Res({ passthrough: true }) res: Response,
+    @CurrentUser() user: AuthUser,
   ) {
     const result = await this.reportsService.getDailySummaryRange(
       query.startDate,
       query.endDate,
+      user.restaurantId,
     );
 
     if (query.format === 'csv') {
@@ -172,10 +188,12 @@ export class ReportsController {
   async getPaymentMethodBreakdownRange(
     @Query() query: DateRangeQueryDto,
     @Res({ passthrough: true }) res: Response,
+    @CurrentUser() user: AuthUser,
   ) {
     const result = await this.reportsService.getPaymentMethodBreakdownRange(
       query.startDate,
       query.endDate,
+      user.restaurantId,
     );
 
     if (query.format === 'csv') {
@@ -204,10 +222,12 @@ export class ReportsController {
   async getTicketCountByDay(
     @Query() query: DateRangeQueryDto,
     @Res({ passthrough: true }) res: Response,
+    @CurrentUser() user: AuthUser,
   ) {
     const result = await this.reportsService.getTicketCountByDay(
       query.startDate,
       query.endDate,
+      user.restaurantId,
     );
 
     if (query.format === 'csv') {

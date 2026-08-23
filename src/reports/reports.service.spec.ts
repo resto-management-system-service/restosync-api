@@ -37,6 +37,7 @@ describe('ReportsService', () => {
   const date = '2025-06-30';
   const startDate = '2025-06-01';
   const endDate = '2025-06-30';
+  const restaurantId = 'restaurant-A';
 
   beforeEach(() => {
     prisma = createMockPrisma();
@@ -44,16 +45,17 @@ describe('ReportsService', () => {
   });
 
   describe('getDailySummary', () => {
-    it('returns correct totalSalesCents and ticketCount with averageTicketCents computed', async () => {
+    it('returns correct totalSalesCents and ticketCount with averageTicketCents computed, scoped by restaurantId', async () => {
       prisma.order.aggregate.mockResolvedValue({
         _sum: { totalCents: 5000 },
         _count: 4,
       });
 
-      const result = await service.getDailySummary(date);
+      const result = await service.getDailySummary(date, restaurantId);
 
       expect(prisma.order.aggregate).toHaveBeenCalledWith({
         where: {
+          restaurantId,
           status: { in: [OrderStatus.COMPLETED, OrderStatus.CONFIRMED] },
           createdAt: expect.objectContaining({
             gte: expect.any(Date),
@@ -74,27 +76,46 @@ describe('ReportsService', () => {
         _count: 0,
       });
 
-      const result = await service.getDailySummary(date);
+      const result = await service.getDailySummary(date, restaurantId);
 
       expect(result.totalSalesCents).toBe(0);
       expect(result.ticketCount).toBe(0);
       expect(result.averageTicketCents).toBe(0);
     });
+
+    it('scopes to a different caller restaurantId independently', async () => {
+      prisma.order.aggregate.mockResolvedValue({
+        _sum: { totalCents: 0 },
+        _count: 0,
+      });
+
+      await service.getDailySummary(date, 'restaurant-B');
+
+      expect(prisma.order.aggregate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ restaurantId: 'restaurant-B' }),
+        }),
+      );
+    });
   });
 
   describe('getPaymentMethodBreakdown', () => {
-    it('returns correct amounts per method and excludes methods with 0 amount', async () => {
+    it('returns correct amounts per method and excludes methods with 0 amount, scoped by restaurantId', async () => {
       prisma.payment.groupBy.mockResolvedValue([
         { method: PaymentMethod.CASH, _sum: { amountCents: 3000 } },
         { method: PaymentMethod.CARD, _sum: { amountCents: 0 } },
       ]);
 
-      const result = await service.getPaymentMethodBreakdown(date);
+      const result = await service.getPaymentMethodBreakdown(
+        date,
+        restaurantId,
+      );
 
       expect(prisma.payment.groupBy).toHaveBeenCalledWith(
         expect.objectContaining({
           by: ['method'],
           where: expect.objectContaining({
+            restaurantId,
             status: PaymentStatus.SUCCEEDED,
           }),
         }),
@@ -107,7 +128,7 @@ describe('ReportsService', () => {
   });
 
   describe('getBestSellingProducts', () => {
-    it('returns a ranked list by quantitySold DESC with revenueCents', async () => {
+    it('returns a ranked list by quantitySold DESC with revenueCents, scoped by restaurantId', async () => {
       prisma.orderItem.groupBy.mockResolvedValue([
         {
           menuItemId: 'item-a',
@@ -121,8 +142,17 @@ describe('ReportsService', () => {
         },
       ]);
 
-      const result = await service.getBestSellingProducts(date, 10);
+      const result = await service.getBestSellingProducts(
+        date,
+        restaurantId,
+        10,
+      );
 
+      expect(prisma.orderItem.groupBy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ restaurantId }),
+        }),
+      );
       expect(result).toEqual([
         {
           menuItemId: 'item-a',
@@ -142,7 +172,7 @@ describe('ReportsService', () => {
     it('respects the limit param by passing it to take', async () => {
       prisma.orderItem.groupBy.mockResolvedValue([]);
 
-      await service.getBestSellingProducts(date, 3);
+      await service.getBestSellingProducts(date, restaurantId, 3);
 
       expect(prisma.orderItem.groupBy).toHaveBeenCalledWith(
         expect.objectContaining({ take: 3 }),
@@ -152,7 +182,7 @@ describe('ReportsService', () => {
     it('defaults the limit to 10 when not provided', async () => {
       prisma.orderItem.groupBy.mockResolvedValue([]);
 
-      await service.getBestSellingProducts(date);
+      await service.getBestSellingProducts(date, restaurantId);
 
       expect(prisma.orderItem.groupBy).toHaveBeenCalledWith(
         expect.objectContaining({ take: 10 }),
@@ -161,7 +191,7 @@ describe('ReportsService', () => {
   });
 
   describe('getClosedTickets', () => {
-    it('returns orders in the date range with itemCount', async () => {
+    it('returns orders in the date range with itemCount, scoped by restaurantId', async () => {
       prisma.order.findMany.mockResolvedValue([
         {
           id: 'order-1',
@@ -173,8 +203,17 @@ describe('ReportsService', () => {
         },
       ]);
 
-      const result = await service.getClosedTickets(startDate, endDate);
+      const result = await service.getClosedTickets(
+        startDate,
+        endDate,
+        restaurantId,
+      );
 
+      expect(prisma.order.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ restaurantId }),
+        }),
+      );
       expect(result).toEqual([
         {
           id: 'order-1',
@@ -190,7 +229,7 @@ describe('ReportsService', () => {
     it('filters by COMPLETED/CONFIRMED status only', async () => {
       prisma.order.findMany.mockResolvedValue([]);
 
-      await service.getClosedTickets(startDate, endDate);
+      await service.getClosedTickets(startDate, endDate, restaurantId);
 
       expect(prisma.order.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -203,15 +242,24 @@ describe('ReportsService', () => {
   });
 
   describe('getTicketCountByDay', () => {
-    it('groups orders by day and returns a sorted array', async () => {
+    it('groups orders by day and returns a sorted array, scoped by restaurantId', async () => {
       prisma.order.findMany.mockResolvedValue([
         { createdAt: new Date('2025-06-02T08:00:00Z') },
         { createdAt: new Date('2025-06-01T09:00:00Z') },
         { createdAt: new Date('2025-06-01T20:00:00Z') },
       ]);
 
-      const result = await service.getTicketCountByDay(startDate, endDate);
+      const result = await service.getTicketCountByDay(
+        startDate,
+        endDate,
+        restaurantId,
+      );
 
+      expect(prisma.order.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ restaurantId }),
+        }),
+      );
       expect(result).toEqual([
         { date: '2025-06-01', ticketCount: 2 },
         { date: '2025-06-02', ticketCount: 1 },
@@ -221,7 +269,11 @@ describe('ReportsService', () => {
     it('returns an empty array when there are no orders', async () => {
       prisma.order.findMany.mockResolvedValue([]);
 
-      const result = await service.getTicketCountByDay(startDate, endDate);
+      const result = await service.getTicketCountByDay(
+        startDate,
+        endDate,
+        restaurantId,
+      );
 
       expect(result).toEqual([]);
     });

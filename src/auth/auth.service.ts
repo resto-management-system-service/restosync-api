@@ -4,6 +4,7 @@ import { JwtService } from '@nestjs/jwt';
 import { Role, User } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import { PrismaService } from '../prisma/prisma.service';
+import { DEFAULT_RESTAURANT_ID } from '../common/constants/tenancy';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
 import { JwtPayload } from './strategies/jwt.strategy';
@@ -30,6 +31,7 @@ export class AuthService {
         firstName: dto.firstName,
         lastName: dto.lastName,
         role: Role.CUSTOMER,
+        restaurantId: DEFAULT_RESTAURANT_ID,
       },
     });
     return this.issueTokens(user);
@@ -111,6 +113,7 @@ export class AuthService {
       sub: user.id,
       email: user.email,
       role: user.role,
+      restaurantId: user.restaurantId,
     };
 
     const accessToken = await this.jwt.signAsync(payload, {

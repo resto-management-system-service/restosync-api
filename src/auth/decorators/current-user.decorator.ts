@@ -4,6 +4,7 @@ export interface AuthUser {
   id: string;
   email: string;
   role: string;
+  restaurantId: string;
 }
 
 export const CurrentUser = createParamDecorator(

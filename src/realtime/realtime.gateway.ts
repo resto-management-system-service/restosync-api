@@ -16,11 +16,13 @@ export interface SocketUser {
   userId: string;
   email: string;
   role: string;
+  restaurantId: string;
 }
 
-// Any staff-facing role sees every order, unfiltered (#156, #154's
-// kitchen display). CUSTOMER is deliberately excluded — customers only
-// join their own per-user room (see joinRooms()).
+// Any staff-facing role sees every order for THEIR restaurant, unfiltered
+// within that scope (#156, #154's kitchen display). CUSTOMER is
+// deliberately excluded — customers only join their own per-user room
+// (see joinRooms()).
 const STAFF_ROLES: string[] = [
   Role.ADMIN,
   Role.WAITER,
@@ -30,7 +32,11 @@ const STAFF_ROLES: string[] = [
   Role.KITCHEN,
 ];
 
-export const STAFF_ROOM = 'staff';
+// #173: scoped per restaurant so staff of Restaurant A never receive
+// real-time order events for Restaurant B.
+export function staffRoom(restaurantId: string): string {
+  return `staff:${restaurantId}`;
+}
 
 export function customerRoom(customerId: string): string {
   return `customer:${customerId}`;
@@ -86,7 +92,7 @@ export class RealtimeGateway implements OnGatewayConnection {
   // receives no events, rather than defaulting to broadcast or staff.
   private joinRooms(client: Socket, user: SocketUser): void {
     if (this.isStaffRole(user.role)) {
-      client.join(STAFF_ROOM);
+      client.join(staffRoom(user.restaurantId));
     } else if (user.role === Role.CUSTOMER) {
       client.join(customerRoom(user.userId));
     }
@@ -116,37 +122,55 @@ export class RealtimeGateway implements OnGatewayConnection {
   }
 
   private toSocketUser(payload: JwtPayload): SocketUser {
-    return { userId: payload.sub, email: payload.email, role: payload.role };
+    return {
+      userId: payload.sub,
+      email: payload.email,
+      role: payload.role,
+      restaurantId: payload.restaurantId,
+    };
   }
 
-  // Staff always see every order (#156). If the order belongs to a
-  // customer, that customer's own room also receives it (#155) — no
-  // other customer ever does.
+  // Staff of the order's OWN restaurant always see it (#156); staff of any
+  // other restaurant never do (#173). If the order belongs to a customer,
+  // that customer's own room also receives it (#155) — no other customer
+  // ever does.
   async emitStatusChanged(payload: StatusChangedPayload): Promise<void> {
-    this.server.to(STAFF_ROOM).emit('order.status_changed', payload);
-    const customerId = await this.findCustomerId(payload.orderId);
-    if (customerId) {
+    const order = await this.findOrderRoomInfo(payload.orderId);
+    if (!order) {
+      return;
+    }
+    this.server
+      .to(staffRoom(order.restaurantId))
+      .emit('order.status_changed', payload);
+    if (order.customerId) {
       this.server
-        .to(customerRoom(customerId))
+        .to(customerRoom(order.customerId))
         .emit('order.status_changed', payload);
     }
   }
 
   async emitTotalsChanged(payload: TotalsChangedPayload): Promise<void> {
-    this.server.to(STAFF_ROOM).emit('order.totals_changed', payload);
-    const customerId = await this.findCustomerId(payload.orderId);
-    if (customerId) {
+    const order = await this.findOrderRoomInfo(payload.orderId);
+    if (!order) {
+      return;
+    }
+    this.server
+      .to(staffRoom(order.restaurantId))
+      .emit('order.totals_changed', payload);
+    if (order.customerId) {
       this.server
-        .to(customerRoom(customerId))
+        .to(customerRoom(order.customerId))
         .emit('order.totals_changed', payload);
     }
   }
 
-  private async findCustomerId(orderId: string): Promise<string | null> {
+  private async findOrderRoomInfo(
+    orderId: string,
+  ): Promise<{ restaurantId: string; customerId: string | null } | null> {
     const order = await this.prisma.order.findUnique({
       where: { id: orderId },
-      select: { customerId: true },
+      select: { restaurantId: true, customerId: true },
     });
-    return order?.customerId ?? null;
+    return order ?? null;
   }
 }

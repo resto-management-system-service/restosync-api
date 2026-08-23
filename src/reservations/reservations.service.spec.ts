@@ -5,8 +5,10 @@ import {
   OrderType,
   ReservationStatus,
   ReservationType,
+  Role,
   TableStatus,
 } from '@prisma/client';
+import { AuthUser } from '../auth/decorators/current-user.decorator';
 import { OrdersService } from '../orders/orders.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ReservationsService } from './reservations.service';
@@ -14,6 +16,7 @@ import { ReservationsService } from './reservations.service';
 type MockPrisma = {
   table: {
     findUnique: jest.Mock;
+    findFirst: jest.Mock;
     update: jest.Mock;
   };
   reservation: {
@@ -36,6 +39,7 @@ function createMockPrisma(): MockPrisma {
   const prisma: MockPrisma = {
     table: {
       findUnique: jest.fn(),
+      findFirst: jest.fn(),
       update: jest.fn(),
     },
     reservation: {
@@ -68,6 +72,16 @@ function createMockPrisma(): MockPrisma {
   return prisma;
 }
 
+function buildUser(overrides: Partial<AuthUser> = {}): AuthUser {
+  return {
+    id: 'user-1',
+    email: 'manager@restosync.local',
+    role: Role.MANAGER,
+    restaurantId: 'restaurant-A',
+    ...overrides,
+  };
+}
+
 describe('ReservationsService', () => {
   let service: ReservationsService;
   let prisma: MockPrisma;
@@ -77,12 +91,16 @@ describe('ReservationsService', () => {
   };
   let config: { get: jest.Mock };
 
-  const actorId = 'user-1';
+  const user = buildUser();
   const tableId = 'table-1';
   const reservationId = 'reservation-1';
   const menuItemId = 'menu-item-1';
 
-  const availableTable = { id: tableId, status: TableStatus.AVAILABLE };
+  const availableTable = {
+    id: tableId,
+    status: TableStatus.AVAILABLE,
+    restaurantId: user.restaurantId,
+  };
 
   beforeEach(() => {
     prisma = createMockPrisma();
@@ -123,7 +141,7 @@ describe('ReservationsService', () => {
         reservationType: ReservationType.INFORMAL,
       };
 
-      const result = await service.create(dto as any, actorId);
+      const result = await service.create(dto as any, user);
 
       expect(config.get).toHaveBeenCalledWith('restaurant.timezone');
       // America/Lima is fixed UTC-5 — 14:00 local -> 19:00 UTC.
@@ -131,8 +149,27 @@ describe('ReservationsService', () => {
       expect(result.reservedForLocal).toBe('2026-08-01T14:00:00');
     });
 
+    it('sets restaurantId on the created reservation from the caller, never from the client', async () => {
+      prisma.reservation.create.mockImplementation(({ data }) =>
+        Promise.resolve({ id: reservationId, ...data }),
+      );
+
+      const dto = {
+        ...baseDto,
+        reservationType: ReservationType.INFORMAL,
+        // Simulates a malicious/naive client payload attempting to set
+        // its own restaurantId directly.
+        restaurantId: 'restaurant-EVIL',
+      };
+
+      await service.create(dto as any, user);
+
+      const { data } = prisma.reservation.create.mock.calls[0][0];
+      expect(data.restaurantId).toBe(user.restaurantId);
+    });
+
     it('WITH_PREORDER: computes depositCents as floor(order.totalCents / 2) and creates the pre-order via OrdersService', async () => {
-      prisma.table.findUnique.mockResolvedValue(availableTable);
+      prisma.table.findFirst.mockResolvedValue(availableTable);
       ordersService.create.mockResolvedValue({
         id: 'order-1',
         totalCents: 4501,
@@ -148,25 +185,28 @@ describe('ReservationsService', () => {
         items: [{ menuItemId, quantity: 2 }],
       };
 
-      const result = await service.create(dto as any, actorId);
+      const result = await service.create(dto as any, user);
 
-      expect(prisma.table.findUnique).toHaveBeenCalledWith({
-        where: { id: tableId },
+      expect(prisma.table.findFirst).toHaveBeenCalledWith({
+        where: { id: tableId, restaurantId: user.restaurantId },
       });
-      expect(ordersService.create).toHaveBeenCalledWith({
-        type: OrderType.TAKEAWAY,
-        items: dto.items,
-      });
+      expect(ordersService.create).toHaveBeenCalledWith(
+        {
+          type: OrderType.TAKEAWAY,
+          items: dto.items,
+        },
+        user.restaurantId,
+      );
       // floor(4501 / 2) = 2250
       expect(result.depositCents).toBe(2250);
       expect(result.orderId).toBe('order-1');
       expect(result.tableId).toBe(tableId);
       expect(result.status).toBe(ReservationStatus.PENDING);
-      expect(result.createdBy).toBe(actorId);
+      expect(result.createdBy).toBe(user.id);
     });
 
     it('DEPOSIT_ONLY: uses the configured fixed deposit amount', async () => {
-      prisma.table.findUnique.mockResolvedValue(availableTable);
+      prisma.table.findFirst.mockResolvedValue(availableTable);
       prisma.reservation.create.mockImplementation(({ data }) =>
         Promise.resolve({ id: reservationId, ...data }),
       );
@@ -177,7 +217,7 @@ describe('ReservationsService', () => {
         tableId,
       };
 
-      const result = await service.create(dto as any, actorId);
+      const result = await service.create(dto as any, user);
 
       expect(config.get).toHaveBeenCalledWith('reservations.depositCents');
       expect(result.depositCents).toBe(1000);
@@ -195,9 +235,9 @@ describe('ReservationsService', () => {
         reservationType: ReservationType.INFORMAL,
       };
 
-      const result = await service.create(dto as any, actorId);
+      const result = await service.create(dto as any, user);
 
-      expect(prisma.table.findUnique).not.toHaveBeenCalled();
+      expect(prisma.table.findFirst).not.toHaveBeenCalled();
       expect(ordersService.create).not.toHaveBeenCalled();
       expect(result.depositCents).toBeUndefined();
       expect(result.tableId).toBeUndefined();
@@ -211,7 +251,7 @@ describe('ReservationsService', () => {
         tableId,
       };
 
-      await expect(service.create(dto as any, actorId)).rejects.toThrow(
+      await expect(service.create(dto as any, user)).rejects.toThrow(
         BadRequestException,
       );
     });
@@ -223,13 +263,13 @@ describe('ReservationsService', () => {
         items: [{ menuItemId, quantity: 1 }],
       };
 
-      await expect(service.create(dto as any, actorId)).rejects.toThrow(
+      await expect(service.create(dto as any, user)).rejects.toThrow(
         BadRequestException,
       );
     });
 
     it('rejects DEPOSIT_ONLY reservations that include items', async () => {
-      prisma.table.findUnique.mockResolvedValue(availableTable);
+      prisma.table.findFirst.mockResolvedValue(availableTable);
 
       const dto = {
         ...baseDto,
@@ -238,13 +278,13 @@ describe('ReservationsService', () => {
         items: [{ menuItemId, quantity: 1 }],
       };
 
-      await expect(service.create(dto as any, actorId)).rejects.toThrow(
+      await expect(service.create(dto as any, user)).rejects.toThrow(
         BadRequestException,
       );
     });
 
     it('throws NotFoundException when the table does not exist', async () => {
-      prisma.table.findUnique.mockResolvedValue(null);
+      prisma.table.findFirst.mockResolvedValue(null);
 
       const dto = {
         ...baseDto,
@@ -252,15 +292,32 @@ describe('ReservationsService', () => {
         tableId,
       };
 
-      await expect(service.create(dto as any, actorId)).rejects.toThrow(
+      await expect(service.create(dto as any, user)).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it('throws NotFoundException (not the table) when the table belongs to another restaurant', async () => {
+      // findFirst is itself scoped by restaurantId, so a table owned by a
+      // different restaurant is invisible here — same as nonexistent.
+      prisma.table.findFirst.mockResolvedValue(null);
+
+      const dto = {
+        ...baseDto,
+        reservationType: ReservationType.DEPOSIT_ONLY,
+        tableId,
+      };
+
+      await expect(service.create(dto as any, user)).rejects.toThrow(
         NotFoundException,
       );
     });
 
     it('throws BadRequestException when the table is not AVAILABLE', async () => {
-      prisma.table.findUnique.mockResolvedValue({
+      prisma.table.findFirst.mockResolvedValue({
         id: tableId,
         status: TableStatus.OCCUPIED,
+        restaurantId: user.restaurantId,
       });
 
       const dto = {
@@ -270,14 +327,14 @@ describe('ReservationsService', () => {
         items: [{ menuItemId, quantity: 1 }],
       };
 
-      await expect(service.create(dto as any, actorId)).rejects.toThrow(
+      await expect(service.create(dto as any, user)).rejects.toThrow(
         BadRequestException,
       );
     });
 
     describe('toleranceMinutes defaults (type-aware, overridable)', () => {
       beforeEach(() => {
-        prisma.table.findUnique.mockResolvedValue(availableTable);
+        prisma.table.findFirst.mockResolvedValue(availableTable);
         prisma.reservation.create.mockImplementation(({ data }) =>
           Promise.resolve({ id: reservationId, ...data }),
         );
@@ -290,7 +347,7 @@ describe('ReservationsService', () => {
       it('defaults to 10 minutes for INFORMAL when omitted', async () => {
         const result = await service.create(
           { ...baseDto, reservationType: ReservationType.INFORMAL } as any,
-          actorId,
+          user,
         );
         expect(result.toleranceMinutes).toBe(10);
       });
@@ -302,7 +359,7 @@ describe('ReservationsService', () => {
             reservationType: ReservationType.DEPOSIT_ONLY,
             tableId,
           } as any,
-          actorId,
+          user,
         );
         expect(result.toleranceMinutes).toBe(20);
       });
@@ -315,7 +372,7 @@ describe('ReservationsService', () => {
             tableId,
             items: [{ menuItemId, quantity: 1 }],
           } as any,
-          actorId,
+          user,
         );
         expect(result.toleranceMinutes).toBe(30);
       });
@@ -327,7 +384,7 @@ describe('ReservationsService', () => {
             reservationType: ReservationType.INFORMAL,
             toleranceMinutes: 999,
           } as any,
-          actorId,
+          user,
         );
         expect(result.toleranceMinutes).toBe(999);
       });
@@ -341,10 +398,58 @@ describe('ReservationsService', () => {
             items: [{ menuItemId, quantity: 1 }],
             toleranceMinutes: 1,
           } as any,
-          actorId,
+          user,
         );
         expect(result.toleranceMinutes).toBe(1);
       });
+    });
+  });
+
+  describe('findAll', () => {
+    it('scopes the query to the caller restaurantId', async () => {
+      prisma.reservation.findMany.mockResolvedValue([]);
+
+      await service.findAll({} as any, user);
+
+      expect(prisma.reservation.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ restaurantId: user.restaurantId }),
+        }),
+      );
+    });
+  });
+
+  describe('findOne', () => {
+    it('returns the reservation when it belongs to the caller restaurant', async () => {
+      prisma.reservation.findUnique.mockResolvedValue({
+        id: reservationId,
+        restaurantId: user.restaurantId,
+        reservedFor: new Date('2026-08-01T19:00:00Z'),
+      });
+
+      const result = await service.findOne(reservationId, user);
+
+      expect(result.id).toBe(reservationId);
+    });
+
+    it('throws NotFoundException if the reservation does not exist', async () => {
+      prisma.reservation.findUnique.mockResolvedValue(null);
+
+      await expect(service.findOne(reservationId, user)).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it('throws NotFoundException (404, NOT 403) for a reservation belonging to another restaurant', async () => {
+      prisma.reservation.findUnique.mockResolvedValue({
+        id: reservationId,
+        restaurantId: 'restaurant-B',
+        reservedFor: new Date('2026-08-01T19:00:00Z'),
+      });
+
+      await expect(service.findOne(reservationId, user)).rejects.toThrow(
+        NotFoundException,
+      );
     });
   });
 
@@ -352,6 +457,7 @@ describe('ReservationsService', () => {
     it('sets Table.status to RESERVED for WITH_PREORDER/DEPOSIT_ONLY and stamps the deposit confirmation', async () => {
       prisma.reservation.findUnique.mockResolvedValue({
         id: reservationId,
+        restaurantId: user.restaurantId,
         status: ReservationStatus.PENDING,
         reservationType: ReservationType.DEPOSIT_ONLY,
         tableId,
@@ -360,7 +466,7 @@ describe('ReservationsService', () => {
       const txReservationUpdate = jest.fn().mockResolvedValue({
         id: reservationId,
         status: ReservationStatus.CONFIRMED,
-        depositConfirmedBy: actorId,
+        depositConfirmedBy: user.id,
       });
       prisma.$transaction.mockImplementationOnce((cb) =>
         cb({
@@ -369,7 +475,7 @@ describe('ReservationsService', () => {
         }),
       );
 
-      const result = await service.confirm(reservationId, actorId);
+      const result = await service.confirm(reservationId, user);
 
       expect(txTableUpdate).toHaveBeenCalledWith({
         where: { id: tableId },
@@ -379,7 +485,7 @@ describe('ReservationsService', () => {
         where: { id: reservationId },
         data: expect.objectContaining({
           status: ReservationStatus.CONFIRMED,
-          depositConfirmedBy: actorId,
+          depositConfirmedBy: user.id,
         }),
       });
       expect(result.status).toBe(ReservationStatus.CONFIRMED);
@@ -388,6 +494,7 @@ describe('ReservationsService', () => {
     it('does NOT touch the table for INFORMAL reservations', async () => {
       prisma.reservation.findUnique.mockResolvedValue({
         id: reservationId,
+        restaurantId: user.restaurantId,
         status: ReservationStatus.PENDING,
         reservationType: ReservationType.INFORMAL,
         tableId: null,
@@ -397,7 +504,7 @@ describe('ReservationsService', () => {
         status: ReservationStatus.CONFIRMED,
       });
 
-      const result = await service.confirm(reservationId, actorId);
+      const result = await service.confirm(reservationId, user);
 
       expect(prisma.$transaction).not.toHaveBeenCalled();
       expect(prisma.reservation.update).toHaveBeenCalledWith({
@@ -410,11 +517,12 @@ describe('ReservationsService', () => {
     it('throws BadRequestException if the reservation is not PENDING', async () => {
       prisma.reservation.findUnique.mockResolvedValue({
         id: reservationId,
+        restaurantId: user.restaurantId,
         status: ReservationStatus.CONFIRMED,
         reservationType: ReservationType.INFORMAL,
       });
 
-      await expect(service.confirm(reservationId, actorId)).rejects.toThrow(
+      await expect(service.confirm(reservationId, user)).rejects.toThrow(
         BadRequestException,
       );
     });
@@ -422,7 +530,20 @@ describe('ReservationsService', () => {
     it('throws NotFoundException if the reservation does not exist', async () => {
       prisma.reservation.findUnique.mockResolvedValue(null);
 
-      await expect(service.confirm(reservationId, actorId)).rejects.toThrow(
+      await expect(service.confirm(reservationId, user)).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it('throws NotFoundException (404, NOT 403) if the reservation belongs to another restaurant', async () => {
+      prisma.reservation.findUnique.mockResolvedValue({
+        id: reservationId,
+        restaurantId: 'restaurant-B',
+        status: ReservationStatus.PENDING,
+        reservationType: ReservationType.INFORMAL,
+      });
+
+      await expect(service.confirm(reservationId, user)).rejects.toThrow(
         NotFoundException,
       );
     });
@@ -432,6 +553,7 @@ describe('ReservationsService', () => {
     it('WITH_PREORDER: links the existing order to the table and sets it OCCUPIED', async () => {
       prisma.reservation.findUnique.mockResolvedValue({
         id: reservationId,
+        restaurantId: user.restaurantId,
         status: ReservationStatus.CONFIRMED,
         reservationType: ReservationType.WITH_PREORDER,
         orderId: 'order-1',
@@ -445,7 +567,7 @@ describe('ReservationsService', () => {
         items: [],
       });
 
-      const result = await service.seat(reservationId, {}, actorId);
+      const result = await service.seat(reservationId, {}, user);
 
       expect(prisma.table.update).toHaveBeenCalledWith({
         where: { id: tableId },
@@ -467,6 +589,7 @@ describe('ReservationsService', () => {
     it('DEPOSIT_ONLY: creates a new (empty) order via OrdersService.create and links it, WITHOUT applying the discount yet', async () => {
       prisma.reservation.findUnique.mockResolvedValue({
         id: reservationId,
+        restaurantId: user.restaurantId,
         status: ReservationStatus.CONFIRMED,
         reservationType: ReservationType.DEPOSIT_ONLY,
         tableId,
@@ -480,13 +603,16 @@ describe('ReservationsService', () => {
       // auto-applied here.
       ordersService.create.mockResolvedValue({ id: 'order-2', items: [] });
 
-      const result = await service.seat(reservationId, {}, actorId);
+      const result = await service.seat(reservationId, {}, user);
 
-      expect(ordersService.create).toHaveBeenCalledWith({
-        type: OrderType.DINE_IN,
-        tableId,
-        items: [],
-      });
+      expect(ordersService.create).toHaveBeenCalledWith(
+        {
+          type: OrderType.DINE_IN,
+          tableId,
+          items: [],
+        },
+        user.restaurantId,
+      );
       expect(prisma.reservation.update).toHaveBeenCalledWith({
         where: { id: reservationId },
         data: { orderId: 'order-2', status: ReservationStatus.SEATED },
@@ -498,6 +624,7 @@ describe('ReservationsService', () => {
     it('DEPOSIT_ONLY: auto-applies the deposit discount once the order already has items (subtotalCents > 0)', async () => {
       prisma.reservation.findUnique.mockResolvedValue({
         id: reservationId,
+        restaurantId: user.restaurantId,
         status: ReservationStatus.CONFIRMED,
         reservationType: ReservationType.DEPOSIT_ONLY,
         tableId,
@@ -512,7 +639,7 @@ describe('ReservationsService', () => {
         discountCents: 1000,
       });
 
-      const result = await service.seat(reservationId, {}, actorId);
+      const result = await service.seat(reservationId, {}, user);
 
       expect(ordersService.applyDiscount).toHaveBeenCalledWith(
         'order-2',
@@ -521,7 +648,7 @@ describe('ReservationsService', () => {
           discountCents: 1000,
           reason: 'Reservation deposit applied',
         },
-        actorId,
+        user,
       );
       expect(result.discountCents).toBe(1000);
     });
@@ -529,6 +656,7 @@ describe('ReservationsService', () => {
     it('DEPOSIT_ONLY: skips discount application when depositCents is 0, even if the order has items', async () => {
       prisma.reservation.findUnique.mockResolvedValue({
         id: reservationId,
+        restaurantId: user.restaurantId,
         status: ReservationStatus.CONFIRMED,
         reservationType: ReservationType.DEPOSIT_ONLY,
         tableId,
@@ -539,7 +667,7 @@ describe('ReservationsService', () => {
         items: [{ priceCents: 5000, quantity: 1 }],
       });
 
-      await service.seat(reservationId, {}, actorId);
+      await service.seat(reservationId, {}, user);
 
       expect(ordersService.applyDiscount).not.toHaveBeenCalled();
     });
@@ -547,12 +675,13 @@ describe('ReservationsService', () => {
     it('INFORMAL: requires a staff-chosen tableId in the request body', async () => {
       prisma.reservation.findUnique.mockResolvedValue({
         id: reservationId,
+        restaurantId: user.restaurantId,
         status: ReservationStatus.CONFIRMED,
         reservationType: ReservationType.INFORMAL,
         tableId: null,
       });
 
-      await expect(service.seat(reservationId, {}, actorId)).rejects.toThrow(
+      await expect(service.seat(reservationId, {}, user)).rejects.toThrow(
         BadRequestException,
       );
       expect(ordersService.create).not.toHaveBeenCalled();
@@ -561,6 +690,7 @@ describe('ReservationsService', () => {
     it('INFORMAL: creates the order on the staff-chosen table and links it', async () => {
       prisma.reservation.findUnique.mockResolvedValue({
         id: reservationId,
+        restaurantId: user.restaurantId,
         status: ReservationStatus.CONFIRMED,
         reservationType: ReservationType.INFORMAL,
         tableId: null,
@@ -570,14 +700,17 @@ describe('ReservationsService', () => {
       const result = await service.seat(
         reservationId,
         { tableId: 'table-9' },
-        actorId,
+        user,
       );
 
-      expect(ordersService.create).toHaveBeenCalledWith({
-        type: OrderType.DINE_IN,
-        tableId: 'table-9',
-        items: [],
-      });
+      expect(ordersService.create).toHaveBeenCalledWith(
+        {
+          type: OrderType.DINE_IN,
+          tableId: 'table-9',
+          items: [],
+        },
+        user.restaurantId,
+      );
       expect(prisma.reservation.update).toHaveBeenCalledWith({
         where: { id: reservationId },
         data: {
@@ -593,13 +726,28 @@ describe('ReservationsService', () => {
     it('throws BadRequestException if the reservation is not CONFIRMED', async () => {
       prisma.reservation.findUnique.mockResolvedValue({
         id: reservationId,
+        restaurantId: user.restaurantId,
         status: ReservationStatus.PENDING,
         reservationType: ReservationType.INFORMAL,
       });
 
       await expect(
-        service.seat(reservationId, { tableId: 'table-9' }, actorId),
+        service.seat(reservationId, { tableId: 'table-9' }, user),
       ).rejects.toThrow(BadRequestException);
+    });
+
+    it('throws NotFoundException (404, NOT 403) if the reservation belongs to another restaurant', async () => {
+      prisma.reservation.findUnique.mockResolvedValue({
+        id: reservationId,
+        restaurantId: 'restaurant-B',
+        status: ReservationStatus.CONFIRMED,
+        reservationType: ReservationType.INFORMAL,
+      });
+
+      await expect(
+        service.seat(reservationId, { tableId: 'table-9' }, user),
+      ).rejects.toThrow(NotFoundException);
+      expect(ordersService.create).not.toHaveBeenCalled();
     });
   });
 
@@ -607,6 +755,7 @@ describe('ReservationsService', () => {
     it('noShow releases a RESERVED table back to AVAILABLE and does not touch the deposit', async () => {
       prisma.reservation.findUnique.mockResolvedValue({
         id: reservationId,
+        restaurantId: user.restaurantId,
         status: ReservationStatus.CONFIRMED,
         tableId,
         depositCents: 1000,
@@ -626,7 +775,7 @@ describe('ReservationsService', () => {
         }),
       );
 
-      const result = await service.noShow(reservationId);
+      const result = await service.noShow(reservationId, user);
 
       expect(txTableUpdate).toHaveBeenCalledWith({
         where: { id: tableId },
@@ -644,6 +793,7 @@ describe('ReservationsService', () => {
     it('cancel releases the table only if it is currently RESERVED', async () => {
       prisma.reservation.findUnique.mockResolvedValue({
         id: reservationId,
+        restaurantId: user.restaurantId,
         status: ReservationStatus.PENDING,
         tableId,
         depositCents: 0,
@@ -663,7 +813,7 @@ describe('ReservationsService', () => {
         }),
       );
 
-      await service.cancel(reservationId);
+      await service.cancel(reservationId, user);
 
       // Table was still AVAILABLE (deposit never confirmed) — nothing to release.
       expect(txTableUpdate).not.toHaveBeenCalled();
@@ -672,12 +822,39 @@ describe('ReservationsService', () => {
     it('rejects cancelling a reservation that is already SEATED/terminal', async () => {
       prisma.reservation.findUnique.mockResolvedValue({
         id: reservationId,
+        restaurantId: user.restaurantId,
         status: ReservationStatus.SEATED,
         tableId,
       });
 
-      await expect(service.cancel(reservationId)).rejects.toThrow(
+      await expect(service.cancel(reservationId, user)).rejects.toThrow(
         BadRequestException,
+      );
+    });
+
+    it('cancel throws NotFoundException (404, NOT 403) for a reservation belonging to another restaurant', async () => {
+      prisma.reservation.findUnique.mockResolvedValue({
+        id: reservationId,
+        restaurantId: 'restaurant-B',
+        status: ReservationStatus.PENDING,
+        tableId,
+      });
+
+      await expect(service.cancel(reservationId, user)).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it('noShow throws NotFoundException (404, NOT 403) for a reservation belonging to another restaurant', async () => {
+      prisma.reservation.findUnique.mockResolvedValue({
+        id: reservationId,
+        restaurantId: 'restaurant-B',
+        status: ReservationStatus.CONFIRMED,
+        tableId,
+      });
+
+      await expect(service.noShow(reservationId, user)).rejects.toThrow(
+        NotFoundException,
       );
     });
   });

@@ -46,8 +46,8 @@ export class OrdersController {
   @ApiResponse({ status: 201, description: 'Order created in DRAFT status' })
   @ApiResponse({ status: 400, description: 'Validation error' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
-  create(@Body() dto: CreateOrderDto, @CurrentUser('id') userId: string) {
-    return this.ordersService.create(dto, userId);
+  create(@Body() dto: CreateOrderDto, @CurrentUser() user: AuthUser) {
+    return this.ordersService.create(dto, user.restaurantId, user.id);
   }
 
   @Get()
@@ -64,8 +64,8 @@ export class OrdersController {
     description: 'List of DRAFT/PENDING orders with totals',
   })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
-  findOpen() {
-    return this.ordersService.findOpen();
+  findOpen(@CurrentUser() user: AuthUser) {
+    return this.ordersService.findOpen(user);
   }
 
   @Get(':id')
@@ -75,8 +75,12 @@ export class OrdersController {
 
   @Roles(Role.ADMIN, Role.STAFF, Role.KITCHEN)
   @Patch(':id/status')
-  updateStatus(@Param('id') id: string, @Body() dto: UpdateOrderStatusDto) {
-    return this.ordersService.updateStatus(id, dto.status);
+  updateStatus(
+    @Param('id') id: string,
+    @Body() dto: UpdateOrderStatusDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.ordersService.updateStatus(id, dto.status, user);
   }
 
   @ApiBearerAuth()
@@ -96,8 +100,12 @@ export class OrdersController {
   })
   @ApiResponse({ status: 404, description: 'Order or menu item not found' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
-  addItem(@Param('id') id: string, @Body() dto: AddOrderItemDto) {
-    return this.ordersService.addItem(id, dto);
+  addItem(
+    @Param('id') id: string,
+    @Body() dto: AddOrderItemDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.ordersService.addItem(id, dto, user);
   }
 
   @ApiBearerAuth()
@@ -119,8 +127,9 @@ export class OrdersController {
     @Param('id') id: string,
     @Param('itemId') itemId: string,
     @Body() dto: UpdateOrderItemDto,
+    @CurrentUser() user: AuthUser,
   ) {
-    return this.ordersService.updateItemQuantity(id, itemId, dto);
+    return this.ordersService.updateItemQuantity(id, itemId, dto, user);
   }
 
   @ApiBearerAuth()
@@ -132,8 +141,12 @@ export class OrdersController {
   @ApiResponse({ status: 400, description: 'Order not editable' })
   @ApiResponse({ status: 404, description: 'Order or item not found' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
-  removeItem(@Param('id') id: string, @Param('itemId') itemId: string) {
-    return this.ordersService.removeItem(id, itemId);
+  removeItem(
+    @Param('id') id: string,
+    @Param('itemId') itemId: string,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.ordersService.removeItem(id, itemId, user);
   }
 
   @ApiBearerAuth()
@@ -148,8 +161,8 @@ export class OrdersController {
   })
   @ApiResponse({ status: 404, description: 'Order not found' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
-  confirmOrder(@Param('id') id: string) {
-    return this.ordersService.confirmOrder(id);
+  confirmOrder(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+    return this.ordersService.confirmOrder(id, user);
   }
 
   @ApiBearerAuth()
@@ -173,9 +186,9 @@ export class OrdersController {
   applyDiscount(
     @Param('id') id: string,
     @Body() dto: ApplyDiscountDto,
-    @CurrentUser('id') userId: string,
+    @CurrentUser() user: AuthUser,
   ) {
-    return this.ordersService.applyDiscount(id, dto, userId);
+    return this.ordersService.applyDiscount(id, dto, user);
   }
 
   @ApiBearerAuth()
@@ -188,7 +201,7 @@ export class OrdersController {
     description: 'List of audit entries, newest first',
   })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
-  getAuditLog(@Param('id') id: string) {
-    return this.auditService.findByEntity('Order', id);
+  getAuditLog(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+    return this.auditService.findByEntity('Order', id, user.restaurantId);
   }
 }

@@ -12,6 +12,7 @@ import {
   ReservationType,
   TableStatus,
 } from '@prisma/client';
+import { AuthUser } from '../auth/decorators/current-user.decorator';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateOrderDto } from '../orders/dto/create-order.dto';
 import { OrdersService } from '../orders/orders.service';
@@ -47,7 +48,7 @@ export class ReservationsService {
     private readonly config: ConfigService,
   ) {}
 
-  async create(dto: CreateReservationDto, actorId: string) {
+  async create(dto: CreateReservationDto, user: AuthUser) {
     if (dto.reservationType === ReservationType.INFORMAL) {
       if (dto.tableId || dto.items) {
         throw new BadRequestException(
@@ -55,15 +56,15 @@ export class ReservationsService {
         );
       }
       const reservation = await this.prisma.reservation.create({
-        data: this.baseReservationData(dto, actorId),
+        data: this.baseReservationData(dto, user),
       });
       return this.withReservedForLocal(reservation);
     }
 
     // WITH_PREORDER and DEPOSIT_ONLY both commit a specific table once the
     // deposit is confirmed later — but the table stays AVAILABLE right now.
-    const table = await this.prisma.table.findUnique({
-      where: { id: dto.tableId },
+    const table = await this.prisma.table.findFirst({
+      where: { id: dto.tableId, restaurantId: user.restaurantId },
     });
     if (!table) {
       throw new NotFoundException('Table not found');
@@ -81,10 +82,13 @@ export class ReservationsService {
       // Reuse OrdersService.create() entirely (price-snapshot logic lives
       // there) — pass type TAKEAWAY so no table gets committed yet; the
       // Reservation's own `tableId` tracks the desired table separately.
-      const order = await this.ordersService.create({
-        type: OrderType.TAKEAWAY,
-        items: dto.items,
-      } as CreateOrderDto);
+      const order = await this.ordersService.create(
+        {
+          type: OrderType.TAKEAWAY,
+          items: dto.items,
+        } as CreateOrderDto,
+        user.restaurantId,
+      );
       orderId = order.id;
       depositCents = Math.floor(order.totalCents / 2);
     } else {
@@ -99,7 +103,7 @@ export class ReservationsService {
 
     const reservation = await this.prisma.reservation.create({
       data: {
-        ...this.baseReservationData(dto, actorId),
+        ...this.baseReservationData(dto, user),
         tableId: dto.tableId,
         orderId,
         depositCents,
@@ -108,8 +112,10 @@ export class ReservationsService {
     return this.withReservedForLocal(reservation);
   }
 
-  async findAll(query: ListReservationsQueryDto) {
-    const where: Prisma.ReservationWhereInput = {};
+  async findAll(query: ListReservationsQueryDto, user: AuthUser) {
+    const where: Prisma.ReservationWhereInput = {
+      restaurantId: user.restaurantId,
+    };
     if (query.status) {
       where.status = query.status;
     }
@@ -130,18 +136,18 @@ export class ReservationsService {
     );
   }
 
-  async findOne(id: string) {
+  async findOne(id: string, user: AuthUser) {
     const reservation = await this.prisma.reservation.findUnique({
       where: { id },
     });
-    if (!reservation) {
+    if (!reservation || reservation.restaurantId !== user.restaurantId) {
       throw new NotFoundException('Reservation not found');
     }
     return this.withReservedForLocal(reservation);
   }
 
-  async confirm(id: string, actorId: string) {
-    const reservation = await this.findOne(id);
+  async confirm(id: string, user: AuthUser) {
+    const reservation = await this.findOne(id, user);
     if (reservation.status !== ReservationStatus.PENDING) {
       throw new BadRequestException(
         `Cannot confirm a reservation with status ${reservation.status}`,
@@ -158,7 +164,11 @@ export class ReservationsService {
 
     // WITH_PREORDER / DEPOSIT_ONLY: the deposit has just been confirmed
     // received by staff — this is the moment the table is actually
-    // committed (AVAILABLE -> RESERVED).
+    // committed (AVAILABLE -> RESERVED). reservation.tableId was already
+    // verified to belong to this restaurant when the reservation was
+    // created (see create()), and `reservation` itself was just verified
+    // above via findOne(), so no further cross-tenant check is needed
+    // before mutating the table by its already-scoped id.
     const updated = await this.prisma.$transaction(async (tx) => {
       if (reservation.tableId) {
         await tx.table.update({
@@ -170,7 +180,7 @@ export class ReservationsService {
         where: { id },
         data: {
           status: ReservationStatus.CONFIRMED,
-          depositConfirmedBy: actorId,
+          depositConfirmedBy: user.id,
           depositConfirmedAt: new Date(),
         },
       });
@@ -178,8 +188,8 @@ export class ReservationsService {
     return this.withReservedForLocal(updated);
   }
 
-  async seat(id: string, dto: SeatReservationDto, actorId: string) {
-    const reservation = await this.findOne(id);
+  async seat(id: string, dto: SeatReservationDto, user: AuthUser) {
+    const reservation = await this.findOne(id, user);
     if (reservation.status !== ReservationStatus.CONFIRMED) {
       throw new BadRequestException(
         `Reservation must be CONFIRMED before seating (current: ${reservation.status})`,
@@ -190,9 +200,9 @@ export class ReservationsService {
       case ReservationType.WITH_PREORDER:
         return this.seatWithPreorder(reservation);
       case ReservationType.DEPOSIT_ONLY:
-        return this.seatDepositOnly(reservation, actorId);
+        return this.seatDepositOnly(reservation, user);
       case ReservationType.INFORMAL:
-        return this.seatInformal(reservation, dto);
+        return this.seatInformal(reservation, dto, user);
       default:
         throw new BadRequestException('Unknown reservation type');
     }
@@ -234,7 +244,7 @@ export class ReservationsService {
       tableId: string | null;
       depositCents: number;
     },
-    actorId: string,
+    user: AuthUser,
   ) {
     if (!reservation.tableId) {
       throw new BadRequestException('Reservation has no table assigned');
@@ -242,11 +252,14 @@ export class ReservationsService {
 
     // Reuses OrdersService.create()'s existing table-occupied-check logic
     // (throws if the table went away, sets it OCCUPIED in one transaction).
-    const order = await this.ordersService.create({
-      type: OrderType.DINE_IN,
-      tableId: reservation.tableId,
-      items: [],
-    } as CreateOrderDto);
+    const order = await this.ordersService.create(
+      {
+        type: OrderType.DINE_IN,
+        tableId: reservation.tableId,
+        items: [],
+      } as CreateOrderDto,
+      user.restaurantId,
+    );
 
     await this.prisma.reservation.update({
       where: { id: reservation.id },
@@ -278,7 +291,7 @@ export class ReservationsService {
           discountCents: reservation.depositCents,
           reason: 'Reservation deposit applied',
         },
-        actorId,
+        user,
       );
     }
 
@@ -288,6 +301,7 @@ export class ReservationsService {
   private async seatInformal(
     reservation: { id: string },
     dto: SeatReservationDto,
+    user: AuthUser,
   ) {
     if (!dto.tableId) {
       throw new BadRequestException(
@@ -295,11 +309,14 @@ export class ReservationsService {
       );
     }
 
-    const order = await this.ordersService.create({
-      type: OrderType.DINE_IN,
-      tableId: dto.tableId,
-      items: [],
-    } as CreateOrderDto);
+    const order = await this.ordersService.create(
+      {
+        type: OrderType.DINE_IN,
+        tableId: dto.tableId,
+        items: [],
+      } as CreateOrderDto,
+      user.restaurantId,
+    );
 
     await this.prisma.reservation.update({
       where: { id: reservation.id },
@@ -313,18 +330,22 @@ export class ReservationsService {
     return order;
   }
 
-  async noShow(id: string) {
-    return this.terminate(id, ReservationStatus.NO_SHOW);
+  async noShow(id: string, user: AuthUser) {
+    return this.terminate(id, ReservationStatus.NO_SHOW, user);
   }
 
-  async cancel(id: string) {
-    return this.terminate(id, ReservationStatus.CANCELLED);
+  async cancel(id: string, user: AuthUser) {
+    return this.terminate(id, ReservationStatus.CANCELLED, user);
   }
 
   // Deposits (if any) are intentionally NOT refunded or reapplied here —
   // they're simply forfeited, left as a historical record on the row.
-  private async terminate(id: string, nextStatus: ReservationStatus) {
-    const reservation = await this.findOne(id);
+  private async terminate(
+    id: string,
+    nextStatus: ReservationStatus,
+    user: AuthUser,
+  ) {
+    const reservation = await this.findOne(id, user);
     if (!TERMINABLE_STATUSES.includes(reservation.status)) {
       throw new BadRequestException(
         `Cannot mark reservation as ${nextStatus} from status ${reservation.status}`,
@@ -353,7 +374,7 @@ export class ReservationsService {
 
   private baseReservationData(
     dto: CreateReservationDto,
-    actorId: string,
+    user: AuthUser,
   ): Prisma.ReservationUncheckedCreateInput {
     return {
       customerName: dto.customerName,
@@ -372,7 +393,8 @@ export class ReservationsService {
       specialOccasion: dto.specialOccasion,
       reservationType: dto.reservationType,
       status: ReservationStatus.PENDING,
-      createdBy: actorId,
+      createdBy: user.id,
+      restaurantId: user.restaurantId,
     };
   }
 

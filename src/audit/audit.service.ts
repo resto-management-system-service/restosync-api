@@ -11,6 +11,7 @@ export class AuditService {
     entityId: string;
     action: string;
     userId: string;
+    restaurantId: string;
     metadata?: Record<string, unknown>;
   }): Promise<void> {
     await this.prisma.auditLog.create({
@@ -21,9 +22,13 @@ export class AuditService {
     });
   }
 
-  async findByEntity(entityType: string, entityId: string) {
+  async findByEntity(
+    entityType: string,
+    entityId: string,
+    restaurantId: string,
+  ) {
     return this.prisma.auditLog.findMany({
-      where: { entityType, entityId },
+      where: { entityType, entityId, restaurantId },
       orderBy: { createdAt: 'desc' },
     });
   }
