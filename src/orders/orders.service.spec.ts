@@ -4,6 +4,7 @@ import { OrderStatus, OrderType, Role, TableStatus } from '@prisma/client';
 import { OrdersService } from './orders.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
+import { ModifiersService } from '../menu/modifiers.service';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
 import { AuthUser } from '../auth/decorators/current-user.decorator';
 
@@ -93,6 +94,16 @@ function createMockRealtimeGateway(): MockRealtimeGateway {
   };
 }
 
+type MockModifiersService = { resolveSelections: jest.Mock };
+
+function createMockModifiersService(): MockModifiersService {
+  return {
+    resolveSelections: jest
+      .fn()
+      .mockResolvedValue({ selections: [], deltaCentsPerUnit: 0 }),
+  };
+}
+
 // Defaults tax.rate to 0 so pre-existing tests (written before #7 added
 // configurable tax) keep asserting the same totals. Individual tests can
 // override via `config.get.mockImplementation(...)` to exercise non-zero
@@ -124,6 +135,7 @@ describe('OrdersService', () => {
   let auditService: MockAuditService;
   let config: MockConfigService;
   let realtimeGateway: MockRealtimeGateway;
+  let modifiersService: MockModifiersService;
 
   const orderId = 'order-1';
   const menuItemId = 'menu-item-1';
@@ -149,11 +161,13 @@ describe('OrdersService', () => {
     auditService = createMockAuditService();
     config = createMockConfigService();
     realtimeGateway = createMockRealtimeGateway();
+    modifiersService = createMockModifiersService();
     service = new OrdersService(
       prisma as unknown as PrismaService,
       auditService as unknown as AuditService,
       config as unknown as ConfigService,
       realtimeGateway as unknown as RealtimeGateway,
+      modifiersService as unknown as ModifiersService,
     );
   });
 
@@ -191,6 +205,82 @@ describe('OrdersService', () => {
       tableId: 'table-1',
       items: [{ menuItemId, quantity: 1 }],
     };
+
+    it('rejects the order when a line has an invalid modifier selection', async () => {
+      prisma.table.findFirst.mockResolvedValue({
+        id: tableId,
+        status: TableStatus.AVAILABLE,
+      });
+      modifiersService.resolveSelections.mockRejectedValue(
+        new BadRequestException('Modifier group "Size" is required'),
+      );
+
+      await expect(
+        service.create(
+          {
+            ...dto,
+            items: [{ menuItemId, quantity: 1, modifierIds: ['x'] }],
+          } as any,
+          user.restaurantId,
+          user.id,
+        ),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('folds the per-unit modifier delta into the stored line total and snapshot', async () => {
+      prisma.table.findFirst.mockResolvedValue({
+        id: tableId,
+        status: TableStatus.AVAILABLE,
+      });
+      modifiersService.resolveSelections.mockResolvedValue({
+        selections: [
+          {
+            id: 'lg',
+            groupId: 'size',
+            groupName: 'Size',
+            name: 'Large',
+            priceDeltaCents: 300,
+          },
+        ],
+        deltaCentsPerUnit: 300,
+      });
+
+      await service.create(
+        {
+          ...dto,
+          items: [{ menuItemId, quantity: 2, modifierIds: ['lg'] }],
+        } as any,
+        user.restaurantId,
+        user.id,
+      );
+
+      const created = txOrderCreate.mock.calls[0][0].data.items.create[0];
+      expect(created.modifierDeltaCents).toBe(300);
+      expect(created.lineTotalCents).toBe((1200 + 300) * 2);
+      expect(created.modifiers).toEqual([
+        {
+          id: 'lg',
+          groupId: 'size',
+          groupName: 'Size',
+          name: 'Large',
+          priceDeltaCents: 300,
+        },
+      ]);
+    });
+
+    it('stores undefined modifiers + zero delta when nothing is selected', async () => {
+      prisma.table.findFirst.mockResolvedValue({
+        id: tableId,
+        status: TableStatus.AVAILABLE,
+      });
+
+      await service.create(dto as any, user.restaurantId, user.id);
+
+      const created = txOrderCreate.mock.calls[0][0].data.items.create[0];
+      expect(created.modifiers ?? null).toBeNull();
+      expect(created.modifierDeltaCents).toBe(0);
+    });
 
     it('creates a new order and sets the table OCCUPIED when the table is AVAILABLE', async () => {
       prisma.table.findFirst.mockResolvedValue({
@@ -433,6 +523,72 @@ describe('OrdersService', () => {
   });
 
   describe('addItem', () => {
+    it('rejects adding an item with an invalid modifier selection', async () => {
+      prisma.order.findUnique.mockResolvedValue(baseOrder);
+      prisma.menuItem.findFirst.mockResolvedValue(availableMenuItem);
+      modifiersService.resolveSelections.mockRejectedValue(
+        new BadRequestException('"Truffle" is not available'),
+      );
+
+      await expect(
+        service.addItem(
+          orderId,
+          { menuItemId, quantity: 1, modifierIds: ['gone'] },
+          user,
+        ),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.orderItem.create).not.toHaveBeenCalled();
+    });
+
+    it('folds the delta into lineTotalCents and writes the modifier snapshot', async () => {
+      prisma.order.findUnique.mockResolvedValue(baseOrder);
+      prisma.menuItem.findFirst.mockResolvedValue(availableMenuItem);
+      prisma.orderItem.create.mockResolvedValue({});
+      prisma.orderItem.findMany.mockResolvedValue([
+        { priceCents: 1200, quantity: 1, lineTotalCents: 1350 },
+      ]);
+      prisma.order.update.mockResolvedValue({
+        ...baseOrder,
+        subtotalCents: 1350,
+        taxCents: 0,
+        totalCents: 1350,
+      });
+      modifiersService.resolveSelections.mockResolvedValue({
+        selections: [
+          {
+            id: 'bacon',
+            groupId: 'extras',
+            groupName: 'Extras',
+            name: 'Bacon',
+            priceDeltaCents: 150,
+          },
+        ],
+        deltaCentsPerUnit: 150,
+      });
+
+      await service.addItem(
+        orderId,
+        { menuItemId, quantity: 1, modifierIds: ['bacon'] },
+        user,
+      );
+
+      expect(prisma.orderItem.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          lineTotalCents: 1350,
+          modifierDeltaCents: 150,
+          modifiers: [
+            {
+              id: 'bacon',
+              groupId: 'extras',
+              groupName: 'Extras',
+              name: 'Bacon',
+              priceDeltaCents: 150,
+            },
+          ],
+        }),
+      });
+    });
+
     it('adds an item with the correct price/name snapshot and recalculates totals', async () => {
       prisma.order.findUnique.mockResolvedValue(baseOrder);
       prisma.menuItem.findFirst.mockResolvedValue(availableMenuItem);
