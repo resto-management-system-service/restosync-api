@@ -16,6 +16,21 @@ describe('tenantGuardOperation', () => {
     expect(query).not.toHaveBeenCalled();
   });
 
+  it('throws when a guarded operation on ModifierGroup is missing restaurantId', async () => {
+    const query = jest.fn().mockResolvedValue([]);
+
+    await expect(
+      tenantGuardOperation({
+        model: 'ModifierGroup',
+        operation: 'findMany',
+        args: { where: { menuItemId: 'item-1' } },
+        query,
+      }),
+    ).rejects.toThrow(/Tenant guard: ModifierGroup\.findMany\(\)/);
+
+    expect(query).not.toHaveBeenCalled();
+  });
+
   it('throws when the where clause is entirely absent', async () => {
     const query = jest.fn().mockResolvedValue([]);
 

@@ -14,6 +14,17 @@ import {
   UpdateMenuItemDto,
 } from './dto/menu-item.dto';
 
+const menuItemInclude = {
+  modifierGroups: {
+    include: {
+      modifiers: {
+        orderBy: [{ sortOrder: 'asc' as const }, { name: 'asc' as const }],
+      },
+    },
+    orderBy: [{ sortOrder: 'asc' as const }, { name: 'asc' as const }],
+  },
+} satisfies Prisma.MenuItemInclude;
+
 // Image policy (MVP): URL-only. Admin provides a public image URL.
 // File upload (S3/Supabase Storage) is out of scope for MVP.
 // To remove an image, set imageUrl to null via PATCH.
@@ -47,6 +58,7 @@ export class MenuItemsService {
     const [data, total] = await this.prisma.$transaction([
       this.prisma.menuItem.findMany({
         where,
+        include: menuItemInclude,
         skip: query.skip,
         take: query.limit,
         orderBy: { name: 'asc' },
@@ -58,7 +70,10 @@ export class MenuItemsService {
 
   // @Public() endpoint — see findAll's note on DEFAULT_RESTAURANT_ID.
   async findOne(id: string) {
-    const item = await this.prisma.menuItem.findUnique({ where: { id } });
+    const item = await this.prisma.menuItem.findUnique({
+      where: { id },
+      include: menuItemInclude,
+    });
     if (!item || item.restaurantId !== DEFAULT_RESTAURANT_ID) {
       throw new NotFoundException('Menu item not found');
     }

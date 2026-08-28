@@ -22,6 +22,7 @@ import {
 } from '../common/dto/pagination-query.dto';
 import { AuthUser } from '../auth/decorators/current-user.decorator';
 import { AuditService } from '../audit/audit.service';
+import { ModifiersService } from '../menu/modifiers.service';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { AddOrderItemDto } from './dto/add-order-item.dto';
@@ -50,6 +51,7 @@ export class OrdersService {
     private readonly auditService: AuditService,
     private readonly config: ConfigService,
     private readonly realtimeGateway: RealtimeGateway,
+    private readonly modifiersService: ModifiersService,
   ) {}
 
   // restaurantId is passed explicitly (rather than a full AuthUser)
@@ -89,7 +91,17 @@ export class OrdersService {
 
     const currency = menuItems[0]?.currency ?? 'usd';
 
-    const orderItems = dto.items.map((line) => {
+    const orderItems: Array<{
+      menuItemId: string;
+      nameSnapshot: string;
+      priceCents: number;
+      quantity: number;
+      modifiers: Prisma.InputJsonValue | undefined;
+      modifierDeltaCents: number;
+      notes: string | undefined;
+      lineTotalCents: number;
+    }> = [];
+    for (const line of dto.items) {
       const item = byId.get(line.menuItemId);
       if (!item) {
         throw new BadRequestException(
@@ -99,17 +111,27 @@ export class OrdersService {
       if (!item.available) {
         throw new BadRequestException(`"${item.name}" is not available`);
       }
-      const lineTotalCents = item.priceCents * line.quantity;
-      return {
+      const resolved = await this.modifiersService.resolveSelections(
+        item.id,
+        line.modifierIds,
+        restaurantId,
+      );
+      const modifierDeltaCents = resolved.deltaCentsPerUnit;
+      const lineTotalCents =
+        (item.priceCents + modifierDeltaCents) * line.quantity;
+      orderItems.push({
         menuItemId: item.id,
         nameSnapshot: item.name,
         priceCents: item.priceCents,
         quantity: line.quantity,
-        modifiers: (line.modifiers ?? undefined) as Prisma.InputJsonValue,
+        modifiers: resolved.selections.length
+          ? (resolved.selections as unknown as Prisma.InputJsonValue)
+          : undefined,
+        modifierDeltaCents,
         notes: line.notes,
         lineTotalCents,
-      };
-    });
+      });
+    }
 
     const order = await this.prisma.$transaction(async (tx) => {
       const created = await tx.order.create({
@@ -256,7 +278,13 @@ export class OrdersService {
       throw new NotFoundException('Menu item not found or not available');
     }
 
-    const lineTotalCents = menuItem.priceCents * dto.quantity;
+    const resolved = await this.modifiersService.resolveSelections(
+      menuItem.id,
+      dto.modifierIds,
+      user.restaurantId,
+    );
+    const lineTotalCents =
+      (menuItem.priceCents + resolved.deltaCentsPerUnit) * dto.quantity;
 
     await this.prisma.orderItem.create({
       data: {
@@ -265,7 +293,10 @@ export class OrdersService {
         nameSnapshot: menuItem.name,
         priceCents: menuItem.priceCents,
         quantity: dto.quantity,
-        modifiers: (dto.modifiers ?? null) as Prisma.InputJsonValue,
+        modifiers: resolved.selections.length
+          ? (resolved.selections as unknown as Prisma.InputJsonValue)
+          : undefined,
+        modifierDeltaCents: resolved.deltaCentsPerUnit,
         notes: dto.notes,
         lineTotalCents,
         restaurantId: user.restaurantId,
@@ -301,7 +332,8 @@ export class OrdersService {
     }
 
     const effectiveQuantity = dto.quantity ?? orderItem.quantity;
-    const lineTotalCents = orderItem.priceCents * effectiveQuantity;
+    const lineTotalCents =
+      (orderItem.priceCents + orderItem.modifierDeltaCents) * effectiveQuantity;
 
     const updateData: Prisma.OrderItemUpdateInput = {
       quantity: effectiveQuantity,
@@ -376,8 +408,11 @@ export class OrdersService {
     const items = await this.prisma.orderItem.findMany({
       where: { orderId, restaurantId },
     });
+    // lineTotalCents already folds in per-unit modifier deltas (see
+    // ModifiersService.resolveSelections + addItem/create), so it is the
+    // authoritative per-line figure — never recompute from priceCents here.
     const subtotalCents = items.reduce(
-      (sum, item) => sum + item.priceCents * item.quantity,
+      (sum, item) => sum + item.lineTotalCents,
       0,
     );
     const taxRate = this.config.get<number>('tax.rate') ?? 0;
@@ -423,7 +458,7 @@ export class OrdersService {
       where: { orderId, restaurantId: user.restaurantId },
     });
     const subtotalCents = items.reduce(
-      (sum, item) => sum + item.priceCents * item.quantity,
+      (sum, item) => sum + item.lineTotalCents,
       0,
     );
 

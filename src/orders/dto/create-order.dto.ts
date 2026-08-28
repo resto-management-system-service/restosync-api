@@ -7,7 +7,6 @@ import {
   IsEnum,
   IsInt,
   IsNotEmpty,
-  IsObject,
   IsOptional,
   IsString,
   IsUUID,
@@ -27,12 +26,13 @@ export class OrderLineDto {
   quantity!: number;
 
   @ApiPropertyOptional({
-    description:
-      'Free-form modifiers (e.g. { "size": "L", "extras": ["bacon"] })',
+    type: [String],
+    description: 'IDs of selected modifier options for this line',
   })
   @IsOptional()
-  @IsObject()
-  modifiers?: Record<string, unknown>;
+  @IsArray()
+  @IsUUID('4', { each: true })
+  modifierIds?: string[];
 
   @ApiPropertyOptional({ description: 'Kitchen instructions for this item' })
   @IsOptional()
