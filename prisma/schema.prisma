@@ -16,6 +16,8 @@ model Restaurant {
   users                User[]
   categories           Category[]
   menuItems            MenuItem[]
+  modifierGroups       ModifierGroup[]
+  modifiers            Modifier[]
   orders               Order[]
   orderItems           OrderItem[]
   tables               Table[]
@@ -109,6 +111,7 @@ model MenuItem {
   restaurantId  String
   restaurant    Restaurant     @relation(fields: [restaurantId], references: [id])
   orderItems    OrderItem[]
+  modifierGroups ModifierGroup[]
   inventoryItem InventoryItem?
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
@@ -116,6 +119,44 @@ model MenuItem {
   @@index([categoryId])
   @@index([restaurantId])
   @@map("menu_items")
+}
+
+model ModifierGroup {
+  id           String     @id @default(uuid())
+  name         String
+  required     Boolean    @default(false)
+  minSelect    Int        @default(0)
+  maxSelect    Int        @default(1)
+  sortOrder    Int        @default(0)
+  menuItemId   String
+  menuItem     MenuItem   @relation(fields: [menuItemId], references: [id], onDelete: Cascade)
+  modifiers    Modifier[]
+  restaurantId String
+  restaurant   Restaurant @relation(fields: [restaurantId], references: [id])
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  @@index([menuItemId])
+  @@index([restaurantId])
+  @@map("modifier_groups")
+}
+
+model Modifier {
+  id              String        @id @default(uuid())
+  name            String
+  priceDeltaCents Int           @default(0)
+  sortOrder       Int           @default(0)
+  available       Boolean       @default(true)
+  groupId         String
+  group           ModifierGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  restaurantId    String
+  restaurant      Restaurant    @relation(fields: [restaurantId], references: [id])
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@index([groupId])
+  @@index([restaurantId])
+  @@map("modifiers")
 }
 
 // ---------- Orders ----------
@@ -208,6 +249,7 @@ model OrderItem {
   priceCents     Int
   quantity       Int
   modifiers      Json?
+  modifierDeltaCents Int    @default(0)
   notes          String?
   lineTotalCents Int
   restaurantId   String

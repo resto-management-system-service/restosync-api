@@ -6,9 +6,10 @@ import { Prisma } from '@prisma/client';
 // model is missing that filter, catching an omission before it can leak or
 // mutate another restaurant's data.
 //
-// Models: the same 12 tenant-owned models from #149 (User, Category,
+// Models: the 12 tenant-owned models from #149 (User, Category,
 // MenuItem, Order, OrderItem, Table, InventoryItem, StockAdjustment,
-// Reservation, CashRegisterSession, Payment, AuditLog). User IS included:
+// Reservation, CashRegisterSession, Payment, AuditLog) plus the 2 added
+// for #6 modifiers (ModifierGroup, Modifier) — 14 in total. User IS included:
 // its only unscoped lookups (login/JWT validation, by email or by id) use
 // findUnique, which is structurally exempt from this guard (see below), so
 // including User here adds real protection for UsersService.findAll/count
@@ -27,6 +28,8 @@ export const TENANT_GUARDED_MODELS = new Set<string>([
   'CashRegisterSession',
   'Payment',
   'AuditLog',
+  'ModifierGroup', // #6 modifiers
+  'Modifier', // #6 modifiers
 ]);
 
 // Operations guarded: every read/bulk-write operation whose `where` clause
