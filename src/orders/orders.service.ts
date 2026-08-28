@@ -332,7 +332,8 @@ export class OrdersService {
     }
 
     const effectiveQuantity = dto.quantity ?? orderItem.quantity;
-    const lineTotalCents = orderItem.priceCents * effectiveQuantity;
+    const lineTotalCents =
+      (orderItem.priceCents + orderItem.modifierDeltaCents) * effectiveQuantity;
 
     const updateData: Prisma.OrderItemUpdateInput = {
       quantity: effectiveQuantity,
@@ -407,8 +408,11 @@ export class OrdersService {
     const items = await this.prisma.orderItem.findMany({
       where: { orderId, restaurantId },
     });
+    // lineTotalCents already folds in per-unit modifier deltas (see
+    // ModifiersService.resolveSelections + addItem/create), so it is the
+    // authoritative per-line figure — never recompute from priceCents here.
     const subtotalCents = items.reduce(
-      (sum, item) => sum + item.priceCents * item.quantity,
+      (sum, item) => sum + item.lineTotalCents,
       0,
     );
     const taxRate = this.config.get<number>('tax.rate') ?? 0;
@@ -454,7 +458,7 @@ export class OrdersService {
       where: { orderId, restaurantId: user.restaurantId },
     });
     const subtotalCents = items.reduce(
-      (sum, item) => sum + item.priceCents * item.quantity,
+      (sum, item) => sum + item.lineTotalCents,
       0,
     );
 

@@ -190,7 +190,7 @@ describe('OrdersService', () => {
       );
       prisma.menuItem.findMany.mockResolvedValue([availableMenuItem]);
       prisma.orderItem.findMany.mockResolvedValue([
-        { priceCents: 1200, quantity: 1 },
+        { priceCents: 1200, quantity: 1, lineTotalCents: 1200 },
       ]);
       prisma.order.update.mockResolvedValue({
         ...baseOrder,
@@ -594,10 +594,7 @@ describe('OrdersService', () => {
       prisma.menuItem.findFirst.mockResolvedValue(availableMenuItem);
       prisma.orderItem.create.mockResolvedValue({});
       prisma.orderItem.findMany.mockResolvedValue([
-        {
-          priceCents: 1200,
-          quantity: 2,
-        },
+        { priceCents: 1200, quantity: 2, lineTotalCents: 2400 },
       ]);
       prisma.order.update.mockResolvedValue({
         ...baseOrder,
@@ -640,7 +637,7 @@ describe('OrdersService', () => {
       prisma.menuItem.findFirst.mockResolvedValue(availableMenuItem);
       prisma.orderItem.create.mockResolvedValue({});
       prisma.orderItem.findMany.mockResolvedValue([
-        { priceCents: 1200, quantity: 2 },
+        { priceCents: 1200, quantity: 2, lineTotalCents: 2400 },
       ]);
       prisma.order.update.mockResolvedValue({
         ...baseOrder,
@@ -665,7 +662,7 @@ describe('OrdersService', () => {
       prisma.menuItem.findFirst.mockResolvedValue(availableMenuItem);
       prisma.orderItem.create.mockResolvedValue({});
       prisma.orderItem.findMany.mockResolvedValue([
-        { priceCents: 1200, quantity: 2 },
+        { priceCents: 1200, quantity: 2, lineTotalCents: 2400 },
       ]);
       prisma.order.update.mockResolvedValue({
         ...baseOrder,
@@ -749,10 +746,11 @@ describe('OrdersService', () => {
         orderId,
         priceCents: 1200,
         quantity: 1,
+        modifierDeltaCents: 0,
       });
       prisma.orderItem.update.mockResolvedValue({});
       prisma.orderItem.findMany.mockResolvedValue([
-        { priceCents: 1200, quantity: 3 },
+        { priceCents: 1200, quantity: 3, lineTotalCents: 3600 },
       ]);
       prisma.order.update.mockResolvedValue({
         ...baseOrder,
@@ -780,6 +778,39 @@ describe('OrdersService', () => {
         data: { quantity: 3, lineTotalCents: 3600 },
       });
       expect(result.totalCents).toBe(3600);
+    });
+
+    it('keeps the per-unit modifier delta when the quantity changes', async () => {
+      prisma.order.findUnique.mockResolvedValue(baseOrder);
+      prisma.orderItem.findFirst.mockResolvedValue({
+        id: orderItemId,
+        orderId,
+        priceCents: 1200,
+        quantity: 1,
+        modifierDeltaCents: 300,
+      });
+      prisma.orderItem.update.mockResolvedValue({});
+      prisma.orderItem.findMany.mockResolvedValue([
+        { priceCents: 1200, quantity: 3, lineTotalCents: 4500 },
+      ]);
+      prisma.order.update.mockResolvedValue({
+        ...baseOrder,
+        subtotalCents: 4500,
+        taxCents: 0,
+        totalCents: 4500,
+      });
+
+      await service.updateItemQuantity(
+        orderId,
+        orderItemId,
+        { quantity: 3 },
+        user,
+      );
+
+      expect(prisma.orderItem.update).toHaveBeenCalledWith({
+        where: { id: orderItemId },
+        data: { quantity: 3, lineTotalCents: (1200 + 300) * 3 },
+      });
     });
 
     it('throws BadRequestException if the order is not DRAFT/PENDING', async () => {
@@ -935,7 +966,7 @@ describe('OrdersService', () => {
     it('applies the discount and records the audit log with the caller restaurantId', async () => {
       prisma.order.findUnique.mockResolvedValue(baseOrder);
       prisma.orderItem.findMany.mockResolvedValue([
-        { priceCents: 1000, quantity: 1 },
+        { priceCents: 1000, quantity: 1, lineTotalCents: 1000 },
       ]);
       prisma.order.update.mockResolvedValue({
         ...baseOrder,
@@ -981,8 +1012,8 @@ describe('OrdersService', () => {
   describe('recalculateTotals', () => {
     it('computes subtotalCents/taxCents/totalCents from the order items, scoped by restaurantId', async () => {
       prisma.orderItem.findMany.mockResolvedValue([
-        { priceCents: 1200, quantity: 2 },
-        { priceCents: 500, quantity: 1 },
+        { priceCents: 1200, quantity: 2, lineTotalCents: 2400 },
+        { priceCents: 500, quantity: 1, lineTotalCents: 500 },
       ]);
       prisma.order.update.mockImplementation(({ data }) =>
         Promise.resolve({ ...baseOrder, ...data }),
@@ -1003,6 +1034,24 @@ describe('OrdersService', () => {
       });
       expect(result.subtotalCents).toBe(2900);
       expect(result.totalCents).toBe(2900);
+    });
+
+    it('sums lineTotalCents so per-unit modifier deltas count toward the subtotal', async () => {
+      prisma.orderItem.findMany.mockResolvedValue([
+        { priceCents: 1200, quantity: 2, lineTotalCents: 3000 }, // +300/unit delta
+        { priceCents: 500, quantity: 1, lineTotalCents: 500 },
+      ]);
+      prisma.order.update.mockImplementation(({ data }) =>
+        Promise.resolve({ ...baseOrder, ...data }),
+      );
+
+      const result = await (service as any).recalculateTotals(
+        orderId,
+        user.restaurantId,
+      );
+
+      expect(result.subtotalCents).toBe(3500);
+      expect(result.totalCents).toBe(3500);
     });
 
     it('returns 0 totals for an order with no items', async () => {
@@ -1026,7 +1075,7 @@ describe('OrdersService', () => {
         key === 'tax.rate' ? 0.18 : undefined,
       );
       prisma.orderItem.findMany.mockResolvedValue([
-        { priceCents: 1000, quantity: 1 },
+        { priceCents: 1000, quantity: 1, lineTotalCents: 1000 },
       ]);
       prisma.order.update.mockImplementation(({ data }) =>
         Promise.resolve({ ...baseOrder, ...data }),
@@ -1049,7 +1098,7 @@ describe('OrdersService', () => {
         key === 'tax.rate' ? 0 : undefined,
       );
       prisma.orderItem.findMany.mockResolvedValue([
-        { priceCents: 1000, quantity: 1 },
+        { priceCents: 1000, quantity: 1, lineTotalCents: 1000 },
       ]);
       prisma.order.update.mockImplementation(({ data }) =>
         Promise.resolve({ ...baseOrder, ...data }),
@@ -1070,8 +1119,8 @@ describe('OrdersService', () => {
       );
       prisma.order.findUnique.mockResolvedValue({ discountCents: 0 });
       prisma.orderItem.findMany.mockResolvedValue([
-        { priceCents: 1200, quantity: 2 },
-        { priceCents: 500, quantity: 1 },
+        { priceCents: 1200, quantity: 2, lineTotalCents: 2400 },
+        { priceCents: 500, quantity: 1, lineTotalCents: 500 },
       ]);
       prisma.order.update.mockImplementation(({ data }) =>
         Promise.resolve({ ...baseOrder, ...data }),
