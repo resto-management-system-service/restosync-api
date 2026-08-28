@@ -57,6 +57,83 @@ async function main() {
     },
   });
 
+  // ─── Demo modifiers on the Classic Cheeseburger ───────────────
+
+  const sizeGroupId = '66666666-6666-4666-8666-666666666601';
+  await prisma.modifierGroup.upsert({
+    where: { id: sizeGroupId },
+    update: {},
+    create: {
+      id: sizeGroupId,
+      name: 'Size',
+      required: true,
+      minSelect: 1,
+      maxSelect: 1,
+      sortOrder: 0,
+      menuItemId: '22222222-2222-4222-8222-222222222222',
+      restaurantId: restaurant.id,
+      modifiers: {
+        create: [
+          {
+            id: '66666666-6666-4666-8666-6666666666a1',
+            name: 'Regular',
+            priceDeltaCents: 0,
+            sortOrder: 0,
+            restaurantId: restaurant.id,
+          },
+          {
+            id: '66666666-6666-4666-8666-6666666666a2',
+            name: 'Double',
+            priceDeltaCents: 400,
+            sortOrder: 1,
+            restaurantId: restaurant.id,
+          },
+        ],
+      },
+    },
+  });
+
+  const extrasGroupId = '66666666-6666-4666-8666-666666666602';
+  await prisma.modifierGroup.upsert({
+    where: { id: extrasGroupId },
+    update: {},
+    create: {
+      id: extrasGroupId,
+      name: 'Extras',
+      required: false,
+      minSelect: 0,
+      maxSelect: 3,
+      sortOrder: 1,
+      menuItemId: '22222222-2222-4222-8222-222222222222',
+      restaurantId: restaurant.id,
+      modifiers: {
+        create: [
+          {
+            id: '66666666-6666-4666-8666-6666666666b1',
+            name: 'Bacon',
+            priceDeltaCents: 150,
+            sortOrder: 0,
+            restaurantId: restaurant.id,
+          },
+          {
+            id: '66666666-6666-4666-8666-6666666666b2',
+            name: 'Fried Egg',
+            priceDeltaCents: 120,
+            sortOrder: 1,
+            restaurantId: restaurant.id,
+          },
+          {
+            id: '66666666-6666-4666-8666-6666666666b3',
+            name: 'No pickles',
+            priceDeltaCents: 0,
+            sortOrder: 2,
+            restaurantId: restaurant.id,
+          },
+        ],
+      },
+    },
+  });
+
   const cashierEmail = 'cashier@restosync.local';
   const cashierPasswordHash = await bcrypt.hash('Cashier123!', 10);
   const cashier = await prisma.user.upsert({

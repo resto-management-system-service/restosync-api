@@ -75,6 +75,8 @@ Sub-issues:
 
 ### Epic #6 — Menu item modifiers / options (`area:menu`, P0)
 
+**Status: Implemented** — see `docs/superpowers/plans/2026-08-28-menu-item-modifiers.md`.
+
 In scope: `ModifierGroup`/`Modifier` models linked to `MenuItem`;
 required/optional groups with min/max rules; order creation validates and
 prices selected modifiers server-side; selections snapshotted onto the
