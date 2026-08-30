@@ -20,6 +20,12 @@ class EnvironmentVariables {
   @IsNumberString()
   APP_PORT?: string;
 
+  // Comma-separated browser CORS allow-list (see common/cors.ts). Optional:
+  // empty reflects any origin in dev, blocks in production.
+  @IsOptional()
+  @IsString()
+  CORS_ORIGINS?: string;
+
   @IsNotEmpty()
   @IsString()
   DATABASE_URL!: string;

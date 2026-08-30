@@ -1,4 +1,9 @@
-name: Deploy to Prod
+name: Deploy pinned version
+
+# Manually deploy a specific released image tag to the shared Fly app
+# (restosync-api) — used to roll back after a bad auto-deploy from main, or
+# to pin the environment to a known-good version. When a separate prod
+# environment is split out, repoint this at that app.
 
 on:
   workflow_dispatch:
@@ -13,7 +18,7 @@ on:
 
 jobs:
   deploy:
-    name: Deploy to Fly.io (prod)
+    name: Deploy pinned image to Fly.io
     runs-on: ubuntu-latest
     steps:
       - name: Validate version input
@@ -24,7 +29,9 @@ jobs:
             echo "::error::Invalid version '$VERSION' — expected format vX.Y.Z (e.g. v0.1.5)"
             exit 1
           fi
-          echo "Deploying registry.fly.io/restosync-api:${VERSION} to prod"
+          echo "Deploying registry.fly.io/restosync-api:${VERSION} to the shared env"
+
+      - uses: actions/checkout@v4
 
       - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1 # master
 
