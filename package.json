@@ -1,12 +1,13 @@
 {
   "name": "restosync-api",
   "version": "0.1.9",
-  "description": "NestJS REST API for restaurant management — menu, orders, payments",
+  "description": "NestJS REST API for restaurant management \u2014 menu, orders, payments",
   "author": "Carlos Sandoval Montoya",
   "private": true,
   "license": "UNLICENSED",
   "scripts": {
     "build": "nest build",
+    "build:seed": "tsc -p prisma/tsconfig.seed.json",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "start": "nest start",
     "start:dev": "nest start --watch",
@@ -22,6 +23,7 @@
     "prisma:deploy": "prisma migrate deploy",
     "prisma:studio": "prisma studio",
     "prisma:seed": "ts-node prisma/seed.ts",
+    "seed:prod": "node dist/prisma/seed.js",
     "openapi:generate": "ts-node -r tsconfig-paths/register scripts/generate-openapi.ts"
   },
   "prisma": {
