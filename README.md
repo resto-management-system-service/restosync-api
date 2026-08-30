@@ -77,6 +77,20 @@ GitHub Actions authenticates with the existing `FLY_API_TOKEN` repo secret.
 Browser origins allowed to call the API are set via `CORS_ORIGINS` in
 `infra/fly.toml` (see `src/common/cors.ts`).
 
+### Seeding the deployed database
+
+`prisma/seed.ts` is compiled into the image (`dist/prisma/seed.js`, via
+`build:seed`) so it can run in the runtime container, which has no `ts-node`.
+It's fully idempotent (upserts) — safe to re-run. Creates the default
+restaurant **"El Buen Filo"** (`00000000-0000-4000-8000-000000000001` — the
+`DEFAULT_RESTAURANT_ID` every request is currently scoped to), the demo users
+(`admin@restosync.local` / `Admin123!`, plus cashier/waiter/manager), a Peruvian
+demo menu, tables and sample orders.
+
+```bash
+flyctl ssh console -a restosync-api -C "npm run seed:prod"
+```
+
 ## API docs & client publishing
 
 The OpenAPI spec is the **contract** shared with consumers (e.g. `restosync-web`). On every
