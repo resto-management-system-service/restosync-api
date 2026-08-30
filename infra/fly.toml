@@ -23,10 +23,13 @@ primary_region = "iad"
   release_command = "npx prisma migrate deploy"
 
 [http_service]
-  internal_port      = 3000
-  force_https        = true
-  auto_stop_machines = true
-  auto_start_machines = true
+  internal_port        = 3000
+  force_https          = true
+  auto_start_machines  = true
+  # Keep one machine always warm so dev requests don't pay a ~13s cold start.
+  # Any machines beyond the first still auto-stop when idle.
+  auto_stop_machines   = true
+  min_machines_running = 1
 
   [[http_service.checks]]
     interval     = "30s"
