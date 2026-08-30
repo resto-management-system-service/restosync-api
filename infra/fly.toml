@@ -1,3 +1,8 @@
+# Shared environment. Auto-deployed on every merge to main by
+# .github/workflows/release.yml. Used as "dev" for now — a separate prod app
+# can be split out later (re-add infra/fly.dev.toml and repoint the deploy job).
+# Secrets (not here): DATABASE_URL, JWT_SECRET, JWT_REFRESH_SECRET, TAX_RATE,
+# STRIPE_*  — set with `flyctl secrets set -a restosync-api ...`.
 app            = "restosync-api"
 primary_region = "iad"
 
@@ -11,6 +16,8 @@ primary_region = "iad"
   JWT_EXPIRES_IN         = "15m"
   JWT_REFRESH_EXPIRES_IN = "7d"
   STRIPE_CURRENCY        = "usd"
+  # Browser origins allowed to call the API (restosync-web). See common/cors.ts.
+  CORS_ORIGINS           = "https://textilescross-app.vercel.app,https://*.vercel.app,http://localhost:3001,http://localhost:3000"
 
 [deploy]
   release_command = "npx prisma migrate deploy"

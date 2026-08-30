@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
 import { SwaggerModule } from '@nestjs/swagger';
 import { AppModule } from './app.module';
+import { enableCors } from './common/cors';
 import { PrismaExceptionFilter } from './common/filters/prisma-exception.filter';
 import { swaggerConfig } from './swagger.config';
 
@@ -13,6 +14,9 @@ async function bootstrap() {
 
   const apiPrefix = config.get<string>('apiPrefix') || 'api';
   app.setGlobalPrefix(apiPrefix, { exclude: ['health'] });
+
+  // Browser clients (restosync-web) — allow-list via CORS_ORIGINS.
+  enableCors(app, config);
 
   app.useGlobalPipes(
     new ValidationPipe({

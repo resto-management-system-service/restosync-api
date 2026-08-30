@@ -107,14 +107,14 @@ jobs:
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
 
-  deploy-dev:
-    name: Deploy to dev
+  deploy:
+    name: Deploy to shared env
     needs: [tag, build]
     runs-on: ubuntu-latest
-    # TEMPORARY: disabled until restosync-api-dev + restosync-db-dev
-    # are provisioned in Fly.io (blocked on org infra decision — see #73).
-    # Re-enable by removing this line once dev infra exists.
-    if: false    
+    # Deploys the freshly built image to the single shared Fly app
+    # (restosync-api), used as "dev" for now. deploy-prod.yml re-deploys a
+    # pinned version to the same app for rollback until a separate prod
+    # environment is split out.
     steps:
       - uses: actions/checkout@v4
         with:
@@ -125,7 +125,7 @@ jobs:
       - run: >
           flyctl deploy
           --image registry.fly.io/restosync-api:${{ needs.tag.outputs.version }}
-          --app restosync-api-dev
-          --config infra/fly.dev.toml
+          --app restosync-api
+          --config infra/fly.toml
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}

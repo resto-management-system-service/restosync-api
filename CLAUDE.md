@@ -66,6 +66,9 @@ The Stripe webhook controller lives at `src/payments/gateway/` and needs `rawBod
 
 ## Infra
 
-- **Fly.io** config at `infra/fly.toml`; Dockerfile is at the repo root (`../Dockerfile` relative to `fly.toml`).
+- **Fly.io** — one shared app `restosync-api` (used as "dev"), config at `infra/fly.toml`; Dockerfile is at the repo root (`../Dockerfile` relative to `fly.toml`).
 - `[deploy] release_command` runs `npx prisma migrate deploy` before each new Machine starts.
-- `infra-validate` workflow validates `fly.toml` on every PR; `deploy` workflow fires on push to `main`.
+- **Auto-deploy**: `release.yml` fires after CI passes on `main` — bumps the patch version, tags it, builds+pushes `registry.fly.io/restosync-api:vX.Y.Z`, then `deploy` job runs `flyctl deploy --image …` to `restosync-api`.
+- **Rollback / pin**: `deploy-pinned.yml` (manual `workflow_dispatch`, `version` input) re-deploys an older tag to the same app.
+- `infra-validate` workflow validates `fly.toml` on every PR.
+- **CORS**: `src/common/cors.ts` + `CORS_ORIGINS` env (comma-separated, `*` = single-label wildcard). Empty = reflect any origin in dev, blocked in production. Set in `infra/fly.toml [env]` for the deployed app.

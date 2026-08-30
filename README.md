@@ -44,6 +44,39 @@ The `docker-compose.yml` defines two services:
 | `postgres` | `postgres:16-alpine` | 5432 | Data persisted in `restosync-pgdata` volume   |
 | `api`      | built from `Dockerfile` | 3000 | Runs `prisma migrate deploy` on boot      |
 
+## Deployment
+
+One shared **Fly.io** app — `restosync-api` (`https://restosync-api.fly.dev`),
+used as the dev/staging environment. Config: `infra/fly.toml`.
+
+- **Auto-deploy** — every merge to `main` that passes CI:
+  `release.yml` bumps the patch version, tags `vX.Y.Z`, builds and pushes
+  `registry.fly.io/restosync-api:vX.Y.Z`, then deploys it. Migrations run via
+  the toml's `release_command` before the new machine starts.
+- **Rollback** — run the **Deploy pinned version** workflow
+  (`deploy-pinned.yml`) with an older `vX.Y.Z`.
+
+### One-time Fly setup
+
+```bash
+flyctl auth login
+flyctl apps create restosync-api                       # if it does not exist
+flyctl postgres create --name restosync-db --region iad
+flyctl postgres attach restosync-db --app restosync-api
+flyctl secrets set -a restosync-api \
+  JWT_SECRET="$(openssl rand -hex 32)" \
+  JWT_REFRESH_SECRET="$(openssl rand -hex 32)" \
+  TAX_RATE=0.18
+# Stripe (optional — payments/billing stay disabled until set):
+flyctl secrets set -a restosync-api \
+  STRIPE_SECRET_KEY=sk_... STRIPE_WEBHOOK_SECRET=whsec_... STRIPE_BILLING_WEBHOOK_SECRET=whsec_...
+flyctl deploy -a restosync-api --config infra/fly.toml  # first deploy
+```
+
+GitHub Actions authenticates with the existing `FLY_API_TOKEN` repo secret.
+Browser origins allowed to call the API are set via `CORS_ORIGINS` in
+`infra/fly.toml` (see `src/common/cors.ts`).
+
 ## API docs & client publishing
 
 The OpenAPI spec is the **contract** shared with consumers (e.g. `restosync-web`). On every

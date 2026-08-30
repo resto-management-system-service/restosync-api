@@ -2,6 +2,14 @@ export default () => ({
   env: process.env.NODE_ENV || 'development',
   port: parseInt(process.env.APP_PORT || '3000', 10),
   apiPrefix: process.env.API_PREFIX || 'api',
+  cors: {
+    // Comma-separated allow-list of browser origins. Entries may use `*` as a
+    // single-label wildcard (e.g. https://*.vercel.app). See common/cors.ts.
+    origins: (process.env.CORS_ORIGINS || '')
+      .split(',')
+      .map((origin) => origin.trim())
+      .filter(Boolean),
+  },
   jwt: {
     secret: process.env.JWT_SECRET,
     expiresIn: process.env.JWT_EXPIRES_IN || '15m',
