@@ -45,7 +45,8 @@ export class TablesService {
   }
 
   async update(id: string, dto: UpdateTableDto, user: AuthUser) {
-    await this.ensureExists(id, user);
+    const table = await this.ensureExists(id, user);
+    this.assertEditable(table);
     return this.prisma.table.update({
       where: { id },
       data: {
@@ -82,9 +83,7 @@ export class TablesService {
 
   async remove(id: string, user: AuthUser) {
     const table = await this.ensureExists(id, user);
-    if (table.status === TableStatus.OCCUPIED) {
-      throw new BadRequestException('Cannot delete an occupied table');
-    }
+    this.assertEditable(table);
     return this.prisma.table.delete({ where: { id } });
   }
 
@@ -94,6 +93,14 @@ export class TablesService {
       throw new NotFoundException('Table not found');
     }
     return table;
+  }
+
+  private assertEditable(table: { status: TableStatus }) {
+    if (table.status !== TableStatus.AVAILABLE) {
+      throw new BadRequestException(
+        'Cannot edit or delete a table that is reserved or occupied',
+      );
+    }
   }
 
   private async withActiveOrder<T extends { id: string; status: TableStatus }>(

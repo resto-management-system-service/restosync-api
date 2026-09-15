@@ -1,5 +1,5 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
-import { Role } from '@prisma/client';
+import { Role, TableStatus } from '@prisma/client';
 import { AuthUser } from '../auth/decorators/current-user.decorator';
 import { PrismaService } from '../prisma/prisma.service';
 import { ZonesService } from './zones.service';
@@ -13,8 +13,9 @@ type MockPrisma = {
     delete: jest.Mock;
   };
   table: {
-    count: jest.Mock;
+    findFirst: jest.Mock;
   };
+  $transaction: jest.Mock;
 };
 
 function createMockPrisma(): MockPrisma {
@@ -27,8 +28,9 @@ function createMockPrisma(): MockPrisma {
       delete: jest.fn(),
     },
     table: {
-      count: jest.fn(),
+      findFirst: jest.fn(),
     },
+    $transaction: jest.fn(),
   };
 }
 
@@ -114,7 +116,7 @@ describe('ZonesService', () => {
       expect(prisma.zone.update).not.toHaveBeenCalled();
     });
 
-    it('updates the zone when it belongs to the caller restaurant', async () => {
+    it('renames a zone regardless of its tables statuses (no table check)', async () => {
       prisma.zone.findUnique.mockResolvedValue({
         id: 'z1',
         restaurantId: user.restaurantId,
@@ -127,6 +129,8 @@ describe('ZonesService', () => {
         where: { id: 'z1' },
         data: { name: 'New name', sortOrder: undefined },
       });
+      // Renaming must not be gated on table status — no table query at all.
+      expect(prisma.table.findFirst).not.toHaveBeenCalled();
     });
   });
 
@@ -140,37 +144,87 @@ describe('ZonesService', () => {
       await expect(service.remove('z1', user)).rejects.toThrow(
         NotFoundException,
       );
-      expect(prisma.table.count).not.toHaveBeenCalled();
+      expect(prisma.table.findFirst).not.toHaveBeenCalled();
       expect(prisma.zone.delete).not.toHaveBeenCalled();
     });
 
-    it('throws BadRequestException when the zone still has tables assigned', async () => {
+    it('throws BadRequestException when the zone has a RESERVED table', async () => {
       prisma.zone.findUnique.mockResolvedValue({
         id: 'z1',
         restaurantId: user.restaurantId,
       });
-      prisma.table.count.mockResolvedValue(3);
+      prisma.table.findFirst.mockResolvedValue({ id: 't1' });
 
       await expect(service.remove('z1', user)).rejects.toThrow(
         BadRequestException,
       );
-      expect(prisma.zone.delete).not.toHaveBeenCalled();
+      expect(prisma.table.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            zoneId: 'z1',
+            restaurantId: user.restaurantId,
+            status: { in: [TableStatus.RESERVED, TableStatus.OCCUPIED] },
+          }),
+        }),
+      );
+      expect(prisma.$transaction).not.toHaveBeenCalled();
     });
 
-    it('deletes the zone when it has no tables assigned', async () => {
+    it('throws BadRequestException when the zone has an OCCUPIED table', async () => {
       prisma.zone.findUnique.mockResolvedValue({
         id: 'z1',
         restaurantId: user.restaurantId,
       });
-      prisma.table.count.mockResolvedValue(0);
-      prisma.zone.delete.mockResolvedValue({ id: 'z1' });
+      prisma.table.findFirst.mockResolvedValue({ id: 't1' });
+
+      await expect(service.remove('z1', user)).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('deletes a zone with no tables', async () => {
+      prisma.zone.findUnique.mockResolvedValue({
+        id: 'z1',
+        restaurantId: user.restaurantId,
+      });
+      prisma.table.findFirst.mockResolvedValue(null);
+      prisma.$transaction.mockImplementation(async (cb: any) =>
+        cb({
+          table: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
+          zone: { delete: jest.fn().mockResolvedValue({ id: 'z1' }) },
+        }),
+      );
+
+      const result = await service.remove('z1', user);
+
+      expect(result).toEqual({ id: 'z1' });
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    });
+
+    it('unassigns the zone AVAILABLE tables (zoneId -> null) and deletes the zone atomically', async () => {
+      prisma.zone.findUnique.mockResolvedValue({
+        id: 'z1',
+        restaurantId: user.restaurantId,
+      });
+      prisma.table.findFirst.mockResolvedValue(null);
+
+      const txTableUpdateMany = jest.fn().mockResolvedValue({ count: 3 });
+      const txZoneDelete = jest.fn().mockResolvedValue({ id: 'z1' });
+      prisma.$transaction.mockImplementation(async (cb: any) =>
+        cb({
+          table: { updateMany: txTableUpdateMany },
+          zone: { delete: txZoneDelete },
+        }),
+      );
 
       await service.remove('z1', user);
 
-      expect(prisma.table.count).toHaveBeenCalledWith({
+      expect(txTableUpdateMany).toHaveBeenCalledWith({
         where: { zoneId: 'z1', restaurantId: user.restaurantId },
+        data: { zoneId: null },
       });
-      expect(prisma.zone.delete).toHaveBeenCalledWith({ where: { id: 'z1' } });
+      expect(txZoneDelete).toHaveBeenCalledWith({ where: { id: 'z1' } });
     });
   });
 });

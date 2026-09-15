@@ -167,7 +167,75 @@ describe('TablesService', () => {
       expect(prisma.table.delete).not.toHaveBeenCalled();
     });
 
-    it('throws BadRequestException when removing an OCCUPIED table belonging to the caller restaurant', async () => {
+    it('edits an AVAILABLE table', async () => {
+      prisma.table.findUnique.mockResolvedValue({
+        id: 't1',
+        status: TableStatus.AVAILABLE,
+        restaurantId: user.restaurantId,
+      });
+      prisma.table.update.mockResolvedValue({ id: 't1' });
+
+      await service.update('t1', { capacity: 6 }, user);
+
+      expect(prisma.table.update).toHaveBeenCalledWith({
+        where: { id: 't1' },
+        data: { name: undefined, capacity: 6 },
+      });
+    });
+
+    it('throws BadRequestException when editing a RESERVED table', async () => {
+      prisma.table.findUnique.mockResolvedValue({
+        id: 't1',
+        status: TableStatus.RESERVED,
+        restaurantId: user.restaurantId,
+      });
+
+      await expect(service.update('t1', { capacity: 6 }, user)).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(prisma.table.update).not.toHaveBeenCalled();
+    });
+
+    it('throws BadRequestException when editing an OCCUPIED table', async () => {
+      prisma.table.findUnique.mockResolvedValue({
+        id: 't1',
+        status: TableStatus.OCCUPIED,
+        restaurantId: user.restaurantId,
+      });
+
+      await expect(
+        service.update('t1', { name: 'New name' }, user),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.table.update).not.toHaveBeenCalled();
+    });
+
+    it('deletes an AVAILABLE table', async () => {
+      prisma.table.findUnique.mockResolvedValue({
+        id: 't1',
+        status: TableStatus.AVAILABLE,
+        restaurantId: user.restaurantId,
+      });
+      prisma.table.delete.mockResolvedValue({ id: 't1' });
+
+      await service.remove('t1', user);
+
+      expect(prisma.table.delete).toHaveBeenCalledWith({ where: { id: 't1' } });
+    });
+
+    it('throws BadRequestException when removing a RESERVED table', async () => {
+      prisma.table.findUnique.mockResolvedValue({
+        id: 't1',
+        status: TableStatus.RESERVED,
+        restaurantId: user.restaurantId,
+      });
+
+      await expect(service.remove('t1', user)).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(prisma.table.delete).not.toHaveBeenCalled();
+    });
+
+    it('throws BadRequestException when removing an OCCUPIED table', async () => {
       prisma.table.findUnique.mockResolvedValue({
         id: 't1',
         status: TableStatus.OCCUPIED,
@@ -177,6 +245,7 @@ describe('TablesService', () => {
       await expect(service.remove('t1', user)).rejects.toThrow(
         BadRequestException,
       );
+      expect(prisma.table.delete).not.toHaveBeenCalled();
     });
   });
 
@@ -252,6 +321,22 @@ describe('TablesService', () => {
         NotFoundException,
       );
       expect(prisma.table.update).not.toHaveBeenCalled();
+    });
+
+    it('still updates the layout of an OCCUPIED table (layout edits are not status-restricted)', async () => {
+      prisma.table.findUnique.mockResolvedValue({
+        id: 't1',
+        status: TableStatus.OCCUPIED,
+        restaurantId: user.restaurantId,
+      });
+
+      await service.updateLayout('t1', layoutDto, user);
+
+      expect(prisma.table.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ positionX: 0.5 }),
+        }),
+      );
     });
   });
 });

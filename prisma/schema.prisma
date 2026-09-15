@@ -190,7 +190,7 @@ enum TableStatus {
 
 model Table {
   id           String        @id @default(uuid())
-  name         String        @unique
+  name         String
   capacity     Int?
   status       TableStatus   @default(AVAILABLE)
   restaurantId String
@@ -207,6 +207,7 @@ model Table {
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
 
+  @@unique([restaurantId, name])
   @@index([restaurantId])
   @@index([zoneId])
   @@map("tables")

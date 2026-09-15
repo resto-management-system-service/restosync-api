@@ -123,32 +123,26 @@ describe('Zones & table layout (e2e)', () => {
         .expect(400);
     });
 
-    it('blocks deleting the zone while a table is assigned to it', async () => {
+    it('deleting a zone with only AVAILABLE tables succeeds and unassigns them', async () => {
       const res = await request(app.getHttpServer())
         .delete(`/api/zones/${zoneId}`)
         .set('Authorization', `Bearer ${adminToken}`)
-        .expect(400);
-
-      expect(res.body.message).toMatch(/tables/i);
-    });
-
-    it('removes the table zoneId, then deletes the zone successfully', async () => {
-      const cleared = await request(app.getHttpServer())
-        .patch(`/api/tables/${tableId}/layout`)
-        .set('Authorization', `Bearer ${adminToken}`)
-        .send({ zoneId: null })
-        .expect(200);
-      expect(cleared.body.zoneId).toBeNull();
-
-      await request(app.getHttpServer())
-        .delete(`/api/zones/${zoneId}`)
-        .set('Authorization', `Bearer ${adminToken}`)
         .expect(200);
 
-      await request(app.getHttpServer())
+      expect(res.body.id).toBe(zoneId);
+
+      // The table is not deleted — it becomes unassigned (zoneId null).
+      const table = await request(app.getHttpServer())
         .get(`/api/tables/${tableId}`)
         .set('Authorization', `Bearer ${adminToken}`)
         .expect(200);
+      expect(table.body.id).toBe(tableId);
+      expect(table.body.zoneId).toBeNull();
+
+      await request(app.getHttpServer())
+        .get(`/api/zones/${zoneId}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(404);
     });
   });
 });
