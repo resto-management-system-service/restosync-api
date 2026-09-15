@@ -3,6 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { TableStatus } from '@prisma/client';
 import { AuthUser } from '../auth/decorators/current-user.decorator';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateZoneDto } from './dto/create-zone.dto';
@@ -42,15 +43,30 @@ export class ZonesService {
 
   async remove(id: string, user: AuthUser) {
     await this.ensureExists(id, user);
-    const tableCount = await this.prisma.table.count({
-      where: { zoneId: id, restaurantId: user.restaurantId },
+
+    const blockingTable = await this.prisma.table.findFirst({
+      where: {
+        zoneId: id,
+        restaurantId: user.restaurantId,
+        status: { in: [TableStatus.RESERVED, TableStatus.OCCUPIED] },
+      },
+      select: { id: true },
     });
-    if (tableCount > 0) {
+    if (blockingTable) {
       throw new BadRequestException(
-        'Cannot delete a zone that still has tables assigned to it',
+        'Cannot delete a zone that has reserved or occupied tables',
       );
     }
-    return this.prisma.zone.delete({ where: { id } });
+
+    // Unassign (never delete) the zone's AVAILABLE tables, then remove the
+    // zone — atomically, so a table is never left pointing at a deleted zone.
+    return this.prisma.$transaction(async (tx) => {
+      await tx.table.updateMany({
+        where: { zoneId: id, restaurantId: user.restaurantId },
+        data: { zoneId: null },
+      });
+      return tx.zone.delete({ where: { id } });
+    });
   }
 
   private async ensureExists(id: string, user: AuthUser) {
