@@ -8,6 +8,7 @@ import { AuthUser } from '../auth/decorators/current-user.decorator';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateTableDto } from './dto/create-table.dto';
 import { UpdateTableDto } from './dto/update-table.dto';
+import { UpdateTableLayoutDto } from './dto/update-table-layout.dto';
 
 const ACTIVE_ORDER_STATUSES: OrderStatus[] = Object.values(OrderStatus).filter(
   (status) =>
@@ -50,6 +51,31 @@ export class TablesService {
       data: {
         name: dto.name,
         capacity: dto.capacity,
+      },
+    });
+  }
+
+  async updateLayout(id: string, dto: UpdateTableLayoutDto, user: AuthUser) {
+    await this.ensureExists(id, user);
+
+    if (dto.zoneId) {
+      const zone = await this.prisma.zone.findFirst({
+        where: { id: dto.zoneId, restaurantId: user.restaurantId },
+      });
+      if (!zone) {
+        throw new NotFoundException('Zone not found');
+      }
+    }
+
+    return this.prisma.table.update({
+      where: { id },
+      data: {
+        zoneId: dto.zoneId,
+        positionX: dto.positionX,
+        positionY: dto.positionY,
+        width: dto.width,
+        height: dto.height,
+        shape: dto.shape,
       },
     });
   }

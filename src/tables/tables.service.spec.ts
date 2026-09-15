@@ -15,6 +15,9 @@ type MockPrisma = {
   order: {
     findFirst: jest.Mock;
   };
+  zone: {
+    findFirst: jest.Mock;
+  };
 };
 
 function createMockPrisma(): MockPrisma {
@@ -27,6 +30,9 @@ function createMockPrisma(): MockPrisma {
       delete: jest.fn(),
     },
     order: {
+      findFirst: jest.fn(),
+    },
+    zone: {
       findFirst: jest.fn(),
     },
   };
@@ -171,6 +177,81 @@ describe('TablesService', () => {
       await expect(service.remove('t1', user)).rejects.toThrow(
         BadRequestException,
       );
+    });
+  });
+
+  describe('updateLayout', () => {
+    const layoutDto = {
+      positionX: 0.5,
+      positionY: 0.25,
+      width: 0.1,
+      height: 0.1,
+      shape: 'circle',
+    };
+
+    beforeEach(() => {
+      prisma.table.findUnique.mockResolvedValue({
+        id: 't1',
+        restaurantId: user.restaurantId,
+        status: TableStatus.AVAILABLE,
+      });
+      prisma.table.update.mockResolvedValue({});
+    });
+
+    it('updates only layout/visual fields, never status/capacity/name', async () => {
+      await service.updateLayout('t1', layoutDto, user);
+
+      const { data } = prisma.table.update.mock.calls[0][0];
+      expect(data).toEqual({
+        zoneId: undefined,
+        positionX: 0.5,
+        positionY: 0.25,
+        width: 0.1,
+        height: 0.1,
+        shape: 'circle',
+      });
+      expect(data).not.toHaveProperty('status');
+      expect(data).not.toHaveProperty('capacity');
+      expect(data).not.toHaveProperty('name');
+    });
+
+    it('assigns the zone when the zone belongs to the caller restaurant', async () => {
+      prisma.zone.findFirst.mockResolvedValue({
+        id: 'z1',
+        restaurantId: user.restaurantId,
+      });
+
+      await service.updateLayout('t1', { zoneId: 'z1' }, user);
+
+      expect(prisma.zone.findFirst).toHaveBeenCalledWith({
+        where: { id: 'z1', restaurantId: user.restaurantId },
+      });
+      expect(prisma.table.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ zoneId: 'z1' }),
+        }),
+      );
+    });
+
+    it('throws NotFoundException (404, NOT 403) when the zone belongs to another restaurant', async () => {
+      prisma.zone.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.updateLayout('t1', { zoneId: 'z1' }, user),
+      ).rejects.toThrow(NotFoundException);
+      expect(prisma.table.update).not.toHaveBeenCalled();
+    });
+
+    it('throws NotFoundException (404, NOT 403) when updating the layout of a table belonging to another restaurant', async () => {
+      prisma.table.findUnique.mockResolvedValue({
+        id: 't1',
+        restaurantId: 'restaurant-B',
+      });
+
+      await expect(service.updateLayout('t1', layoutDto, user)).rejects.toThrow(
+        NotFoundException,
+      );
+      expect(prisma.table.update).not.toHaveBeenCalled();
     });
   });
 });

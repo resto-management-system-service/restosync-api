@@ -21,6 +21,7 @@ import {
 import { Roles } from '../auth/decorators/roles.decorator';
 import { CreateTableDto } from './dto/create-table.dto';
 import { UpdateTableDto } from './dto/update-table.dto';
+import { UpdateTableLayoutDto } from './dto/update-table-layout.dto';
 import { TablesService } from './tables.service';
 
 @ApiTags('tables')
@@ -78,5 +79,21 @@ export class TablesController {
   @ApiResponse({ status: 404, description: 'Table not found' })
   remove(@Param('id') id: string, @CurrentUser() user: AuthUser) {
     return this.tablesService.remove(id, user);
+  }
+
+  @Patch(':id/layout')
+  @Roles(Role.MANAGER, Role.ADMIN)
+  @ApiOperation({
+    summary: 'Update table layout/visual fields (zone + position/size/shape)',
+  })
+  @ApiResponse({ status: 200, description: 'Table layout updated' })
+  @ApiResponse({ status: 400, description: 'Validation error' })
+  @ApiResponse({ status: 404, description: 'Table or zone not found' })
+  updateLayout(
+    @Param('id') id: string,
+    @Body() dto: UpdateTableLayoutDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.tablesService.updateLayout(id, dto, user);
   }
 }

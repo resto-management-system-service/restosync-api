@@ -21,6 +21,7 @@ model Restaurant {
   orders               Order[]
   orderItems           OrderItem[]
   tables               Table[]
+  zones                Zone[]
   inventoryItems       InventoryItem[]
   stockAdjustments     StockAdjustment[]
   reservations         Reservation[]
@@ -196,11 +197,33 @@ model Table {
   restaurant   Restaurant    @relation(fields: [restaurantId], references: [id])
   orders       Order[]
   reservations Reservation[]
+  zoneId       String?
+  zone         Zone?         @relation(fields: [zoneId], references: [id])
+  positionX    Float? // 0.0–1.0
+  positionY    Float? // 0.0–1.0
+  width        Float? // 0.0–1.0, relative to canvas width
+  height       Float? // 0.0–1.0, relative to canvas height
+  shape        String?       @default("rounded") // "rounded" | "square" | "circle"
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
 
   @@index([restaurantId])
+  @@index([zoneId])
   @@map("tables")
+}
+
+model Zone {
+  id           String     @id @default(uuid())
+  restaurantId String
+  restaurant   Restaurant @relation(fields: [restaurantId], references: [id])
+  name         String // "Piso 1", "Terraza"
+  sortOrder    Int        @default(0)
+  tables       Table[]
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  @@index([restaurantId])
+  @@map("zones")
 }
 
 model Order {

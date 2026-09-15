@@ -20,6 +20,7 @@ import { ReservationsModule } from './reservations/reservations.module';
 import { RestaurantsModule } from './restaurants/restaurants.module';
 import { TablesModule } from './tables/tables.module';
 import { UsersModule } from './users/users.module';
+import { ZonesModule } from './zones/zones.module';
 
 @Module({
   imports: [
@@ -42,6 +43,7 @@ import { UsersModule } from './users/users.module';
     ReservationsModule,
     RestaurantsModule,
     RealtimeModule,
+    ZonesModule,
   ],
   controllers: [AppController],
   providers: [
