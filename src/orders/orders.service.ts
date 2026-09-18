@@ -59,7 +59,11 @@ export class OrdersService {
   // behalf of an already-verified reservation/table, not only directly
   // from an authenticated HTTP request.
   async create(dto: CreateOrderDto, restaurantId: string, customerId?: string) {
-    let table: { id: string; status: TableStatus } | null = null;
+    let table: {
+      id: string;
+      status: TableStatus;
+      zoneId: string | null;
+    } | null = null;
     if (dto.type === OrderType.DINE_IN) {
       table = await this.prisma.table.findFirst({
         where: { id: dto.tableId, restaurantId },
@@ -166,6 +170,17 @@ export class OrdersService {
 
       return created;
     });
+
+    if (table) {
+      await this.emitRealtimeEvent('table.status_changed', table.id, () =>
+        this.realtimeGateway.emitTableStatusChanged({
+          tableId: table.id,
+          restaurantId,
+          status: TableStatus.OCCUPIED,
+          zoneId: table.zoneId ?? null,
+        }),
+      );
+    }
 
     return this.recalculateTotals(order.id, restaurantId);
   }
@@ -517,15 +532,16 @@ export class OrdersService {
   // silent inventory hook — it must always leave a trace via warn-level
   // logging with enough context (orderId, event type) to debug.
   private async emitRealtimeEvent(
-    eventType: 'order.status_changed' | 'order.totals_changed',
-    orderId: string,
+    eventType:
+      'order.status_changed' | 'order.totals_changed' | 'table.status_changed',
+    subjectId: string,
     emit: () => void | Promise<void>,
   ): Promise<void> {
     try {
       await emit();
     } catch (err) {
       this.logger.warn(
-        `Failed to emit realtime event ${eventType} for order ${orderId}: ${err}`,
+        `Failed to emit realtime event ${eventType} for ${subjectId}: ${err}`,
       );
     }
   }

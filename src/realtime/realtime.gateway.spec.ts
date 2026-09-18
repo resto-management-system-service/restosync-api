@@ -1,6 +1,6 @@
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
-import { OrderStatus } from '@prisma/client';
+import { OrderStatus, TableStatus } from '@prisma/client';
 import type { Server, Socket } from 'socket.io';
 import { customerRoom, RealtimeGateway, staffRoom } from './realtime.gateway';
 import { PrismaService } from '../prisma/prisma.service';
@@ -358,6 +358,64 @@ describe('RealtimeGateway', () => {
         payload,
       );
       expect(staffBHandler).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('emitTableStatusChanged', () => {
+    const payload = {
+      tableId: 'table-1',
+      restaurantId: 'restaurant-A',
+      status: TableStatus.OCCUPIED,
+      zoneId: 'zone-1',
+    };
+
+    it("emits to the owning restaurant's staff room only, with the full payload", async () => {
+      const server = { to: jest.fn().mockReturnThis(), emit: jest.fn() };
+      gateway.server = server as unknown as Server;
+
+      await gateway.emitTableStatusChanged(payload);
+
+      expect(server.to).toHaveBeenCalledWith(staffRoom('restaurant-A'));
+      expect(server.to).toHaveBeenCalledTimes(1);
+      expect(server.emit).toHaveBeenCalledWith('table.status_changed', payload);
+      expect(server.emit).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not deliver the event to another restaurant's staff room (tenant scoping)", async () => {
+      const staffAHandler = jest.fn();
+      const staffBHandler = jest.fn();
+      const rooms: Record<string, { emit: jest.Mock }> = {
+        [staffRoom('restaurant-A')]: { emit: staffAHandler },
+        [staffRoom('restaurant-B')]: { emit: staffBHandler },
+      };
+      const server = {
+        to: jest.fn((room: string) => rooms[room] ?? { emit: jest.fn() }),
+      };
+      gateway.server = server as unknown as Server;
+
+      await gateway.emitTableStatusChanged(payload);
+
+      expect(staffAHandler).toHaveBeenCalledWith(
+        'table.status_changed',
+        payload,
+      );
+      expect(staffBHandler).not.toHaveBeenCalled();
+    });
+
+    it('never emits to a customer room (tables have no customer-room concept)', async () => {
+      const customerHandler = jest.fn();
+      const rooms: Record<string, { emit: jest.Mock }> = {
+        [staffRoom('restaurant-A')]: { emit: jest.fn() },
+        [customerRoom('customer-1')]: { emit: customerHandler },
+      };
+      const server = {
+        to: jest.fn((room: string) => rooms[room] ?? { emit: jest.fn() }),
+      };
+      gateway.server = server as unknown as Server;
+
+      await gateway.emitTableStatusChanged(payload);
+
+      expect(customerHandler).not.toHaveBeenCalled();
     });
   });
 });

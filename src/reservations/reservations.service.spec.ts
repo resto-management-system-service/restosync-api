@@ -11,6 +11,7 @@ import {
 import { AuthUser } from '../auth/decorators/current-user.decorator';
 import { OrdersService } from '../orders/orders.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { RealtimeGateway } from '../realtime/realtime.gateway';
 import { ReservationsService } from './reservations.service';
 
 type MockPrisma = {
@@ -89,6 +90,7 @@ describe('ReservationsService', () => {
     create: jest.Mock;
     applyDiscount: jest.Mock;
   };
+  let realtimeGateway: { emitTableStatusChanged: jest.Mock };
   let config: { get: jest.Mock };
 
   const user = buildUser();
@@ -108,6 +110,9 @@ describe('ReservationsService', () => {
       create: jest.fn(),
       applyDiscount: jest.fn(),
     };
+    realtimeGateway = {
+      emitTableStatusChanged: jest.fn().mockResolvedValue(undefined),
+    };
     config = {
       get: jest.fn((key: string) => {
         if (key === 'reservations.depositCents') return 1000;
@@ -119,6 +124,7 @@ describe('ReservationsService', () => {
       prisma as unknown as PrismaService,
       ordersService as unknown as OrdersService,
       config as unknown as ConfigService,
+      realtimeGateway as unknown as RealtimeGateway,
     );
   });
 
@@ -491,6 +497,69 @@ describe('ReservationsService', () => {
       expect(result.status).toBe(ReservationStatus.CONFIRMED);
     });
 
+    it('emits table.status_changed RESERVED after committing the table', async () => {
+      prisma.reservation.findUnique.mockResolvedValue({
+        id: reservationId,
+        restaurantId: user.restaurantId,
+        status: ReservationStatus.PENDING,
+        reservationType: ReservationType.DEPOSIT_ONLY,
+        tableId,
+        table: { zoneId: 'zone-1' },
+      });
+      const txTableUpdate = jest.fn().mockResolvedValue({});
+      const txReservationUpdate = jest.fn().mockResolvedValue({
+        id: reservationId,
+        status: ReservationStatus.CONFIRMED,
+        depositConfirmedBy: user.id,
+      });
+      prisma.$transaction.mockImplementationOnce((cb) =>
+        cb({
+          table: { update: txTableUpdate },
+          reservation: { update: txReservationUpdate },
+        }),
+      );
+
+      await service.confirm(reservationId, user);
+
+      expect(realtimeGateway.emitTableStatusChanged).toHaveBeenCalledWith({
+        tableId,
+        restaurantId: user.restaurantId,
+        status: TableStatus.RESERVED,
+        zoneId: 'zone-1',
+      });
+    });
+
+    it('still confirms the reservation when the table emission throws (best-effort)', async () => {
+      prisma.reservation.findUnique.mockResolvedValue({
+        id: reservationId,
+        restaurantId: user.restaurantId,
+        status: ReservationStatus.PENDING,
+        reservationType: ReservationType.DEPOSIT_ONLY,
+        tableId,
+        table: { zoneId: 'zone-1' },
+      });
+      const txTableUpdate = jest.fn().mockResolvedValue({});
+      const txReservationUpdate = jest.fn().mockResolvedValue({
+        id: reservationId,
+        status: ReservationStatus.CONFIRMED,
+        depositConfirmedBy: user.id,
+      });
+      prisma.$transaction.mockImplementationOnce((cb) =>
+        cb({
+          table: { update: txTableUpdate },
+          reservation: { update: txReservationUpdate },
+        }),
+      );
+      realtimeGateway.emitTableStatusChanged.mockImplementation(() => {
+        throw new Error('socket server unavailable');
+      });
+
+      const result = await service.confirm(reservationId, user);
+
+      expect(result.status).toBe(ReservationStatus.CONFIRMED);
+      expect(realtimeGateway.emitTableStatusChanged).toHaveBeenCalled();
+    });
+
     it('does NOT touch the table for INFORMAL reservations', async () => {
       prisma.reservation.findUnique.mockResolvedValue({
         id: reservationId,
@@ -584,6 +653,34 @@ describe('ReservationsService', () => {
       });
       expect(ordersService.create).not.toHaveBeenCalled();
       expect(result.id).toBe('order-1');
+    });
+
+    it('WITH_PREORDER: emits table.status_changed OCCUPIED after seating', async () => {
+      prisma.reservation.findUnique.mockResolvedValue({
+        id: reservationId,
+        restaurantId: user.restaurantId,
+        status: ReservationStatus.CONFIRMED,
+        reservationType: ReservationType.WITH_PREORDER,
+        orderId: 'order-1',
+        tableId,
+        table: { zoneId: 'zone-1' },
+      });
+      prisma.table.update.mockResolvedValue({});
+      prisma.reservation.update.mockResolvedValue({});
+      prisma.order.update.mockResolvedValue({
+        id: 'order-1',
+        tableId,
+        items: [],
+      });
+
+      await service.seat(reservationId, {}, user);
+
+      expect(realtimeGateway.emitTableStatusChanged).toHaveBeenCalledWith({
+        tableId,
+        restaurantId: user.restaurantId,
+        status: TableStatus.OCCUPIED,
+        zoneId: 'zone-1',
+      });
     });
 
     it('DEPOSIT_ONLY: creates a new (empty) order via OrdersService.create and links it, WITHOUT applying the discount yet', async () => {
@@ -788,6 +885,40 @@ describe('ReservationsService', () => {
       expect(result.status).toBe(ReservationStatus.NO_SHOW);
       // Deposit is left untouched — forfeited, not refunded/reapplied.
       expect(ordersService.applyDiscount).not.toHaveBeenCalled();
+    });
+
+    it('noShow emits table.status_changed AVAILABLE when it releases a RESERVED table', async () => {
+      prisma.reservation.findUnique.mockResolvedValue({
+        id: reservationId,
+        restaurantId: user.restaurantId,
+        status: ReservationStatus.CONFIRMED,
+        tableId,
+        depositCents: 1000,
+        table: { zoneId: 'zone-1' },
+      });
+      const txTableFindUnique = jest
+        .fn()
+        .mockResolvedValue({ id: tableId, status: TableStatus.RESERVED });
+      const txTableUpdate = jest.fn().mockResolvedValue({});
+      const txReservationUpdate = jest.fn().mockResolvedValue({
+        id: reservationId,
+        status: ReservationStatus.NO_SHOW,
+      });
+      prisma.$transaction.mockImplementationOnce((cb) =>
+        cb({
+          table: { findUnique: txTableFindUnique, update: txTableUpdate },
+          reservation: { update: txReservationUpdate },
+        }),
+      );
+
+      await service.noShow(reservationId, user);
+
+      expect(realtimeGateway.emitTableStatusChanged).toHaveBeenCalledWith({
+        tableId,
+        restaurantId: user.restaurantId,
+        status: TableStatus.AVAILABLE,
+        zoneId: 'zone-1',
+      });
     });
 
     it('cancel releases the table only if it is currently RESERVED', async () => {

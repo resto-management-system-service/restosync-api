@@ -17,6 +17,7 @@ import { InventoryService } from '../inventory/inventory.service';
 import { canTransition } from '../orders/order-status';
 import { OrdersService } from '../orders/orders.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { RealtimeGateway } from '../realtime/realtime.gateway';
 import { CheckoutDto } from './dto/checkout.dto';
 import {
   GatewayEvent,
@@ -34,6 +35,7 @@ export class PaymentsService {
     private readonly prisma: PrismaService,
     private readonly orders: OrdersService,
     private readonly inventoryService: InventoryService,
+    private readonly realtimeGateway: RealtimeGateway,
     @Inject(PAYMENT_GATEWAY) private readonly gateway: PaymentGateway,
   ) {}
 
@@ -85,7 +87,7 @@ export class PaymentsService {
   async checkout(dto: CheckoutDto, user: AuthUser) {
     const order = await this.prisma.order.findUnique({
       where: { id: dto.orderId },
-      include: { items: true },
+      include: { items: true, tableRef: { select: { zoneId: true } } },
     });
     if (!order || order.restaurantId !== user.restaurantId) {
       throw new NotFoundException('Order not found');
@@ -166,11 +168,40 @@ export class PaymentsService {
       });
     });
 
+    if (order.tableId) {
+      const tableId = order.tableId;
+      await this.emitRealtimeEvent('table.status_changed', tableId, () =>
+        this.realtimeGateway.emitTableStatusChanged({
+          tableId,
+          restaurantId: order.restaurantId,
+          status: TableStatus.AVAILABLE,
+          zoneId: order.tableRef?.zoneId ?? null,
+        }),
+      );
+    }
+
     // Best-effort, non-blocking: the sale is already confirmed and paid,
     // so an inventory hiccup must never fail or roll back the checkout.
     await this.decrementInventoryForOrder(order, user.id);
 
     return payment;
+  }
+
+  // Real-time notification is best-effort (mirrors OrdersService's wrapper):
+  // a failure to emit must never break the underlying payment operation, but
+  // it must always leave a warn-level trace.
+  private async emitRealtimeEvent(
+    eventType: 'table.status_changed',
+    subjectId: string,
+    emit: () => void | Promise<void>,
+  ): Promise<void> {
+    try {
+      await emit();
+    } catch (err) {
+      this.logger.warn(
+        `Failed to emit realtime event ${eventType} for ${subjectId}: ${err}`,
+      );
+    }
   }
 
   // Optional hook (#51): decrements stock for any OrderItem linked to an

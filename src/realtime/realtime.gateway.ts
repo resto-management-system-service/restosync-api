@@ -7,7 +7,7 @@ import {
   WebSocketServer,
   WsException,
 } from '@nestjs/websockets';
-import { OrderStatus, Role } from '@prisma/client';
+import { OrderStatus, Role, TableStatus } from '@prisma/client';
 import { Server, Socket } from 'socket.io';
 import { JwtPayload } from '../auth/strategies/jwt.strategy';
 import { PrismaService } from '../prisma/prisma.service';
@@ -54,6 +54,13 @@ export interface TotalsChangedPayload {
   taxCents: number;
   discountCents: number;
   totalCents: number;
+}
+
+export interface TableStatusChangedPayload {
+  tableId: string;
+  restaurantId: string;
+  status: TableStatus;
+  zoneId: string | null;
 }
 
 @WebSocketGateway()
@@ -162,6 +169,19 @@ export class RealtimeGateway implements OnGatewayConnection {
         .to(customerRoom(order.customerId))
         .emit('order.totals_changed', payload);
     }
+  }
+
+  // Tables have no customer-facing room concept — the floor plan is a
+  // staff-only view — so, unlike order events, this is emitted to the owning
+  // restaurant's staff room only (#173 tenant scoping). The payload already
+  // carries restaurantId + zoneId (resolved at the call site), so no DB
+  // lookup is needed here.
+  async emitTableStatusChanged(
+    payload: TableStatusChangedPayload,
+  ): Promise<void> {
+    this.server
+      .to(staffRoom(payload.restaurantId))
+      .emit('table.status_changed', payload);
   }
 
   private async findOrderRoomInfo(

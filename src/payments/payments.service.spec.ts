@@ -10,6 +10,7 @@ import { AuthUser } from '../auth/decorators/current-user.decorator';
 import { InventoryService } from '../inventory/inventory.service';
 import { OrdersService } from '../orders/orders.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { RealtimeGateway } from '../realtime/realtime.gateway';
 import { PaymentGateway } from './gateway/payment-gateway.interface';
 import { PaymentsService } from './payments.service';
 
@@ -69,6 +70,7 @@ describe('PaymentsService', () => {
   let service: PaymentsService;
   let prisma: MockPrisma;
   let inventoryService: { adjust: jest.Mock };
+  let realtimeGateway: { emitTableStatusChanged: jest.Mock };
   let txOrderUpdate: jest.Mock;
   let txPaymentCreate: jest.Mock;
   let txTableUpdate: jest.Mock;
@@ -114,11 +116,15 @@ describe('PaymentsService', () => {
     );
 
     inventoryService = { adjust: jest.fn().mockResolvedValue({}) };
+    realtimeGateway = {
+      emitTableStatusChanged: jest.fn().mockResolvedValue(undefined),
+    };
 
     service = new PaymentsService(
       prisma as unknown as PrismaService,
       {} as unknown as OrdersService,
       inventoryService as unknown as InventoryService,
+      realtimeGateway as unknown as RealtimeGateway,
       {} as unknown as PaymentGateway,
     );
   });
@@ -146,6 +152,7 @@ describe('PaymentsService', () => {
         prisma as unknown as PrismaService,
         {} as unknown as OrdersService,
         inventoryService as unknown as InventoryService,
+        realtimeGateway as unknown as RealtimeGateway,
         gateway,
       );
 
@@ -235,6 +242,72 @@ describe('PaymentsService', () => {
         where: { id: 'table-1' },
         data: { status: TableStatus.AVAILABLE },
       });
+    });
+
+    it('emits table.status_changed to the staff room after releasing the table', async () => {
+      const orderWithTable = {
+        ...baseOrder,
+        tableId: 'table-1',
+        tableRef: { zoneId: 'zone-1' },
+      };
+      prisma.order.findUnique.mockResolvedValue(orderWithTable);
+      prisma.cashRegisterSession.findFirst.mockResolvedValue(activeSession);
+      prisma.payment.findFirst.mockResolvedValue(null);
+
+      await service.checkout(
+        {
+          orderId,
+          method: PaymentMethod.CASH,
+          amountPaidCents: 1200,
+        },
+        user,
+      );
+
+      expect(realtimeGateway.emitTableStatusChanged).toHaveBeenCalledWith({
+        tableId: 'table-1',
+        restaurantId: user.restaurantId,
+        status: TableStatus.AVAILABLE,
+        zoneId: 'zone-1',
+      });
+    });
+
+    it('does not emit table.status_changed for orders without a tableId', async () => {
+      prisma.order.findUnique.mockResolvedValue(baseOrder);
+      prisma.cashRegisterSession.findFirst.mockResolvedValue(activeSession);
+      prisma.payment.findFirst.mockResolvedValue(null);
+
+      await service.checkout(
+        {
+          orderId,
+          method: PaymentMethod.CASH,
+          amountPaidCents: 1200,
+        },
+        user,
+      );
+
+      expect(realtimeGateway.emitTableStatusChanged).not.toHaveBeenCalled();
+    });
+
+    it('still completes checkout when the table emission throws (best-effort)', async () => {
+      const orderWithTable = { ...baseOrder, tableId: 'table-1' };
+      prisma.order.findUnique.mockResolvedValue(orderWithTable);
+      prisma.cashRegisterSession.findFirst.mockResolvedValue(activeSession);
+      prisma.payment.findFirst.mockResolvedValue(null);
+      realtimeGateway.emitTableStatusChanged.mockImplementation(() => {
+        throw new Error('socket server unavailable');
+      });
+
+      const result = await service.checkout(
+        {
+          orderId,
+          method: PaymentMethod.CASH,
+          amountPaidCents: 1200,
+        },
+        user,
+      );
+
+      expect(result).toEqual({ id: 'payment-1' });
+      expect(realtimeGateway.emitTableStatusChanged).toHaveBeenCalled();
     });
 
     it('does not attempt to release a table for orders without a tableId', async () => {
