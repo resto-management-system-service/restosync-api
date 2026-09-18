@@ -335,9 +335,24 @@ describe('ZonesService', () => {
 
       expect(result).toEqual({ suggestedName: '101' });
       expect(prisma.table.findMany).toHaveBeenCalledWith({
-        where: { zoneId: 'z1', restaurantId: user.restaurantId },
+        where: { restaurantId: user.restaurantId },
         select: { name: true },
       });
+    });
+
+    it('counts an unassigned table that still holds this zone code prefix', async () => {
+      prisma.zone.findUnique.mockResolvedValue({
+        id: 'z1',
+        restaurantId: user.restaurantId,
+        code: '1',
+      });
+      // An orphaned table (zoneId: null after its zone was deleted) named "101"
+      // must still reserve the "01" suffix, because names are restaurant-wide.
+      prisma.table.findMany.mockResolvedValue([{ name: '101' }]);
+
+      const result = await service.getNextTableName('z1', user);
+
+      expect(result).toEqual({ suggestedName: '102' });
     });
 
     it('returns the next sequential number when suffixes are taken', async () => {
