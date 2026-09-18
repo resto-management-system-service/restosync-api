@@ -51,8 +51,12 @@ export class ZonesService {
   async getNextTableName(id: string, user: AuthUser) {
     const zone = await this.ensureExists(id, user);
 
+    // Scan ALL tables for the restaurant — NOT just those currently assigned to
+    // this zone — because names are unique per restaurant (not per zone). An
+    // orphaned table (zoneId: null, e.g. after its zone was deleted) still holds
+    // a name with this zone's code prefix and must still reserve that suffix.
     const tables = await this.prisma.table.findMany({
-      where: { zoneId: id, restaurantId: user.restaurantId },
+      where: { restaurantId: user.restaurantId },
       select: { name: true },
     });
 
