@@ -134,7 +134,7 @@ describe('Zones & table layout (e2e)', () => {
         .expect(400);
     });
 
-    it('deleting a zone with only AVAILABLE tables succeeds and unassigns them', async () => {
+    it('deleting a zone with only AVAILABLE tables cascade-deletes them', async () => {
       const res = await request(app.getHttpServer())
         .delete(`/api/zones/${zoneId}`)
         .set('Authorization', `Bearer ${adminToken}`)
@@ -142,13 +142,11 @@ describe('Zones & table layout (e2e)', () => {
 
       expect(res.body.id).toBe(zoneId);
 
-      // The table is not deleted — it becomes unassigned (zoneId null).
-      const table = await request(app.getHttpServer())
+      // The AVAILABLE table is deleted together with the zone.
+      await request(app.getHttpServer())
         .get(`/api/tables/${tableId}`)
         .set('Authorization', `Bearer ${adminToken}`)
-        .expect(200);
-      expect(table.body.id).toBe(tableId);
-      expect(table.body.zoneId).toBeNull();
+        .expect(404);
 
       await request(app.getHttpServer())
         .get(`/api/zones/${zoneId}`)
