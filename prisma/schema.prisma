@@ -218,11 +218,13 @@ model Zone {
   restaurantId String
   restaurant   Restaurant @relation(fields: [restaurantId], references: [id])
   name         String // "Piso 1", "Terraza"
+  code         String // "1", "2", "T", "VIP" — table-name prefix
   sortOrder    Int        @default(0)
   tables       Table[]
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
 
+  @@unique([restaurantId, code])
   @@index([restaurantId])
   @@map("zones")
 }

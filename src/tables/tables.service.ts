@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { OrderStatus, TableStatus } from '@prisma/client';
 import { AuthUser } from '../auth/decorators/current-user.decorator';
+import { normalizeName } from '../common/utils/normalize-name';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateTableDto } from './dto/create-table.dto';
 import { UpdateTableDto } from './dto/update-table.dto';
@@ -34,7 +35,8 @@ export class TablesService {
     return this.withActiveOrder(table, user);
   }
 
-  create(dto: CreateTableDto, user: AuthUser) {
+  async create(dto: CreateTableDto, user: AuthUser) {
+    await this.assertNameUnique(dto.name, user);
     return this.prisma.table.create({
       data: {
         name: dto.name,
@@ -47,6 +49,9 @@ export class TablesService {
   async update(id: string, dto: UpdateTableDto, user: AuthUser) {
     const table = await this.ensureExists(id, user);
     this.assertEditable(table);
+    if (dto.name !== undefined) {
+      await this.assertNameUnique(dto.name, user, id);
+    }
     return this.prisma.table.update({
       where: { id },
       data: {
@@ -100,6 +105,24 @@ export class TablesService {
       throw new BadRequestException(
         'Cannot edit or delete a table that is reserved or occupied',
       );
+    }
+  }
+
+  private async assertNameUnique(
+    name: string,
+    user: AuthUser,
+    excludeId?: string,
+  ) {
+    const normalized = normalizeName(name);
+    const existing = await this.prisma.table.findMany({
+      where: {
+        restaurantId: user.restaurantId,
+        ...(excludeId ? { id: { not: excludeId } } : {}),
+      },
+      select: { id: true, name: true },
+    });
+    if (existing.some((t) => normalizeName(t.name) === normalized)) {
+      throw new BadRequestException(`Table name "${name}" already exists`);
     }
   }
 

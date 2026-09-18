@@ -125,6 +125,7 @@ describe('TablesService', () => {
 
   describe('create', () => {
     it('sets restaurantId from the caller, never from the client', async () => {
+      prisma.table.findMany.mockResolvedValue([]);
       prisma.table.create.mockResolvedValue({});
 
       await service.create(
@@ -138,6 +139,44 @@ describe('TablesService', () => {
 
       const { data } = prisma.table.create.mock.calls[0][0];
       expect(data.restaurantId).toBe(user.restaurantId);
+    });
+
+    it('rejects a duplicate name (whitespace/casing variation) with a 400', async () => {
+      prisma.table.findMany.mockResolvedValue([
+        { id: 't-other', name: 'Mesa 1' },
+      ]);
+
+      await expect(
+        service.create({ name: ' mesa   1 ' }, user),
+      ).rejects.toThrow(BadRequestException);
+      await expect(service.create({ name: 'MESA 1' }, user)).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(prisma.table.create).not.toHaveBeenCalled();
+    });
+
+    it('allows a name that differs only by a removed space ("mesa1" vs "Mesa 1")', async () => {
+      prisma.table.findMany.mockResolvedValue([
+        { id: 't-other', name: 'Mesa 1' },
+      ]);
+      prisma.table.create.mockResolvedValue({});
+
+      await service.create({ name: 'mesa1' }, user);
+
+      expect(prisma.table.create).toHaveBeenCalled();
+    });
+
+    it('scopes the uniqueness check to the caller restaurant', async () => {
+      prisma.table.findMany.mockResolvedValue([]);
+      prisma.table.create.mockResolvedValue({});
+
+      await service.create({ name: 'Mesa 1' }, user);
+
+      expect(prisma.table.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ restaurantId: user.restaurantId }),
+        }),
+      );
     });
   });
 
@@ -181,6 +220,42 @@ describe('TablesService', () => {
         where: { id: 't1' },
         data: { name: undefined, capacity: 6 },
       });
+    });
+
+    it('rejects renaming to a name that already exists (normalized, excluding itself)', async () => {
+      prisma.table.findUnique.mockResolvedValue({
+        id: 't1',
+        status: TableStatus.AVAILABLE,
+        restaurantId: user.restaurantId,
+      });
+      prisma.table.findMany.mockResolvedValue([
+        { id: 't-other', name: 'Mesa 2' },
+      ]);
+
+      await expect(
+        service.update('t1', { name: ' MESA  2 ' }, user),
+      ).rejects.toThrow(BadRequestException);
+
+      expect(prisma.table.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ id: { not: 't1' } }),
+        }),
+      );
+      expect(prisma.table.update).not.toHaveBeenCalled();
+    });
+
+    it('allows a table to keep its own name on update (self excluded)', async () => {
+      prisma.table.findUnique.mockResolvedValue({
+        id: 't1',
+        status: TableStatus.AVAILABLE,
+        restaurantId: user.restaurantId,
+      });
+      prisma.table.findMany.mockResolvedValue([]);
+      prisma.table.update.mockResolvedValue({ id: 't1' });
+
+      await service.update('t1', { name: 'Mesa 1' }, user);
+
+      expect(prisma.table.update).toHaveBeenCalled();
     });
 
     it('throws BadRequestException when editing a RESERVED table', async () => {
