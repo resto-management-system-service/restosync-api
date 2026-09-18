@@ -48,6 +48,19 @@ export class ZonesController {
     return this.zonesService.findAll(user);
   }
 
+  @Get(':id/next-table-name')
+  @ApiOperation({
+    summary: 'Suggest the next available table name for a zone',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Suggested table name, e.g. { "suggestedName": "102" }',
+  })
+  @ApiResponse({ status: 404, description: 'Zone not found' })
+  getNextTableName(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+    return this.zonesService.getNextTableName(id, user);
+  }
+
   @Patch(':id')
   @Roles(Role.MANAGER, Role.ADMIN)
   @ApiOperation({ summary: 'Rename or reorder a zone' })

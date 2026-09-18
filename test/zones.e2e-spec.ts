@@ -44,10 +44,14 @@ describe('Zones & table layout (e2e)', () => {
     const res = await request(app.getHttpServer())
       .post('/api/zones')
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({ name: `ZonesFlow_${Date.now()}` })
+      .send({
+        name: `ZonesFlow_${Date.now()}`,
+        code: String(Date.now()).slice(-10),
+      })
       .expect(201);
 
     expect(res.body.name).toBeDefined();
+    expect(res.body.code).toBeDefined();
     expect(res.body.sortOrder).toBe(0);
   });
 
@@ -55,7 +59,10 @@ describe('Zones & table layout (e2e)', () => {
     await request(app.getHttpServer())
       .post('/api/zones')
       .set('Authorization', `Bearer ${cashierToken}`)
-      .send({ name: `Rejected_${Date.now()}` })
+      .send({
+        name: `Rejected_${Date.now()}`,
+        code: String(Date.now()).slice(-10),
+      })
       .expect(403);
   });
 
@@ -67,7 +74,11 @@ describe('Zones & table layout (e2e)', () => {
       const zone = await request(app.getHttpServer())
         .post('/api/zones')
         .set('Authorization', `Bearer ${adminToken}`)
-        .send({ name: `Terraza_${Date.now()}`, sortOrder: 1 })
+        .send({
+          name: `Terraza_${Date.now()}`,
+          code: String(Date.now()).slice(-10),
+          sortOrder: 1,
+        })
         .expect(201);
       zoneId = zone.body.id;
     });

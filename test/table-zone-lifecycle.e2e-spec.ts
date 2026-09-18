@@ -140,7 +140,10 @@ describe('Table & Zone lifecycle rules (e2e)', () => {
       const zone = await request(app.getHttpServer())
         .post('/api/zones')
         .set(auth(adminToken))
-        .send({ name: `RenameZone_${Date.now()}` })
+        .send({
+          name: `RenameZone_${Date.now()}`,
+          code: String(Date.now()).slice(-10),
+        })
         .expect(201);
       const zoneId = zone.body.id;
 
@@ -164,7 +167,10 @@ describe('Table & Zone lifecycle rules (e2e)', () => {
       const zone = await request(app.getHttpServer())
         .post('/api/zones')
         .set(auth(adminToken))
-        .send({ name: `BlockedZone_${Date.now()}` })
+        .send({
+          name: `BlockedZone_${Date.now()}`,
+          code: String(Date.now()).slice(-10),
+        })
         .expect(201);
       const zoneId = zone.body.id;
 
@@ -210,10 +216,11 @@ describe('Table & Zone lifecycle rules (e2e)', () => {
 
     it('allows recreating a zone with the same name after deletion', async () => {
       const name = `ReuseZone_${Date.now()}`;
+      const code = String(Date.now()).slice(-10);
       const zone = await request(app.getHttpServer())
         .post('/api/zones')
         .set(auth(adminToken))
-        .send({ name })
+        .send({ name, code })
         .expect(201);
 
       await request(app.getHttpServer())
@@ -224,7 +231,7 @@ describe('Table & Zone lifecycle rules (e2e)', () => {
       const recreated = await request(app.getHttpServer())
         .post('/api/zones')
         .set(auth(adminToken))
-        .send({ name })
+        .send({ name, code })
         .expect(201);
 
       expect(recreated.body.name).toBe(name);
