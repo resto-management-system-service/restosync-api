@@ -75,55 +75,124 @@ describe('ZonesService', () => {
       expect(data.restaurantId).toBe(user.restaurantId);
     });
 
-    it('stores the zone code as-is', async () => {
+    it('assigns sequential numeric codes to "Piso" zones in creation order', async () => {
+      const zones: { name: string; code: string }[] = [];
+      prisma.zone.findMany.mockImplementation(() => Promise.resolve(zones));
+      prisma.zone.create.mockImplementation(async ({ data }: any) => {
+        zones.push({ name: data.name, code: data.code });
+        return data;
+      });
+
+      const codes: string[] = [];
+      for (const name of ['Piso 1', 'Piso 2', 'Piso 3']) {
+        const zone = await service.create({ name, code: 'ignored' }, user);
+        codes.push(zone.code);
+      }
+
+      expect(codes).toEqual(['1', '2', '3']);
+    });
+
+    it('assigns letter-prefixed codes to non-Piso zones', async () => {
+      const zones: { name: string; code: string }[] = [];
+      prisma.zone.findMany.mockImplementation(() => Promise.resolve(zones));
+      prisma.zone.create.mockImplementation(async ({ data }: any) => {
+        zones.push({ name: data.name, code: data.code });
+        return data;
+      });
+
+      const first = await service.create(
+        { name: 'Terraza 1', code: 'ignored' },
+        user,
+      );
+      const second = await service.create(
+        { name: 'Terraza 2', code: 'ignored' },
+        user,
+      );
+
+      expect(first.code).toBe('TER1');
+      expect(second.code).toBe('TER2');
+    });
+
+    it('uses the full leading word when it is 3 characters or fewer', async () => {
       prisma.zone.findMany.mockResolvedValue([]);
       prisma.zone.create.mockResolvedValue({});
 
-      await service.create({ name: 'Terraza', code: 'T' }, user);
+      await service.create({ name: 'VIP 1', code: 'ignored' }, user);
 
-      const { data } = prisma.zone.create.mock.calls[0][0];
-      expect(data.code).toBe('T');
+      expect(prisma.zone.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ code: 'VIP1' }),
+        }),
+      );
+    });
+
+    it('matches "piso" case-insensitively for the numeric rule', async () => {
+      prisma.zone.findMany.mockResolvedValue([{ name: 'Piso 1', code: '1' }]);
+      prisma.zone.create.mockResolvedValue({});
+
+      await service.create({ name: 'piso 2', code: 'ignored' }, user);
+
+      expect(prisma.zone.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ code: '2' }),
+        }),
+      );
+    });
+
+    it('does not share "Piso" numbering with other categories', async () => {
+      prisma.zone.findMany.mockResolvedValue([
+        { name: 'Piso 1', code: '1' },
+        { name: 'Terraza 1', code: '2' },
+      ]);
+      prisma.zone.create.mockResolvedValue({});
+
+      await service.create({ name: 'Piso 2', code: 'ignored' }, user);
+
+      expect(prisma.zone.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ code: '2' }),
+        }),
+      );
+    });
+
+    it('increments to the next number when two leading words share a prefix', async () => {
+      prisma.zone.findMany.mockResolvedValue([
+        { name: 'Barra 1', code: 'BAR1' },
+      ]);
+      prisma.zone.create.mockResolvedValue({});
+
+      await service.create({ name: 'Bar 1', code: 'ignored' }, user);
+
+      expect(prisma.zone.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ code: 'BAR2' }),
+        }),
+      );
     });
 
     it('defaults sortOrder to 0 when omitted', async () => {
       prisma.zone.findMany.mockResolvedValue([]);
       prisma.zone.create.mockResolvedValue({});
 
-      await service.create({ name: 'Terraza', code: 'T' }, user);
+      await service.create({ name: 'Terraza', code: 'ignored' }, user);
 
-      const { data } = prisma.zone.create.mock.calls[0][0];
-      expect(data.sortOrder).toBe(0);
-    });
-
-    it('rejects a duplicate code with a 400 (case-insensitive)', async () => {
-      prisma.zone.findMany.mockResolvedValue([{ id: 'z-other', code: 't' }]);
-
-      await expect(
-        service.create({ name: 'Terraza', code: 'T' }, user),
-      ).rejects.toThrow(BadRequestException);
-      expect(prisma.zone.create).not.toHaveBeenCalled();
-    });
-
-    it('allows the same code in a different restaurant', async () => {
-      prisma.zone.findMany.mockResolvedValue([]);
-      prisma.zone.create.mockResolvedValue({});
-
-      await service.create({ name: 'Piso 1', code: '1' }, user);
-
-      expect(prisma.zone.create).toHaveBeenCalled();
-    });
-
-    it('scopes the uniqueness check to the caller restaurant', async () => {
-      prisma.zone.findMany.mockResolvedValue([]);
-      prisma.zone.create.mockResolvedValue({});
-
-      await service.create({ name: 'Piso 1', code: '1' }, user);
-
-      expect(prisma.zone.findMany).toHaveBeenCalledWith(
+      expect(prisma.zone.create).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: expect.objectContaining({ restaurantId: user.restaurantId }),
+          data: expect.objectContaining({ sortOrder: 0 }),
         }),
       );
+    });
+
+    it('scopes code computation to the caller restaurant', async () => {
+      prisma.zone.findMany.mockResolvedValue([]);
+      prisma.zone.create.mockResolvedValue({});
+
+      await service.create({ name: 'Piso 1', code: 'ignored' }, user);
+
+      expect(prisma.zone.findMany).toHaveBeenCalledWith({
+        where: { restaurantId: user.restaurantId },
+        select: { name: true, code: true },
+      });
     });
   });
 
@@ -285,7 +354,7 @@ describe('ZonesService', () => {
       prisma.table.findFirst.mockResolvedValue(null);
       prisma.$transaction.mockImplementation(async (cb: any) =>
         cb({
-          table: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
+          table: { deleteMany: jest.fn().mockResolvedValue({ count: 0 }) },
           zone: { delete: jest.fn().mockResolvedValue({ id: 'z1' }) },
         }),
       );
@@ -296,27 +365,37 @@ describe('ZonesService', () => {
       expect(prisma.$transaction).toHaveBeenCalledTimes(1);
     });
 
-    it('unassigns the zone AVAILABLE tables (zoneId -> null) and deletes the zone atomically', async () => {
+    it('cascade-deletes the zone AVAILABLE tables and deletes the zone atomically', async () => {
       prisma.zone.findUnique.mockResolvedValue({
         id: 'z1',
         restaurantId: user.restaurantId,
       });
       prisma.table.findFirst.mockResolvedValue(null);
 
-      const txTableUpdateMany = jest.fn().mockResolvedValue({ count: 3 });
+      const tables = [{ id: 't1' }, { id: 't2' }, { id: 't3' }];
+      prisma.table.findMany.mockResolvedValue(tables);
+
+      const txTableDeleteMany = jest.fn().mockImplementation(() => {
+        tables.splice(0, tables.length);
+        return { count: 3 };
+      });
       const txZoneDelete = jest.fn().mockResolvedValue({ id: 'z1' });
       prisma.$transaction.mockImplementation(async (cb: any) =>
         cb({
-          table: { updateMany: txTableUpdateMany },
+          table: { deleteMany: txTableDeleteMany },
           zone: { delete: txZoneDelete },
         }),
       );
 
       await service.remove('z1', user);
 
-      expect(txTableUpdateMany).toHaveBeenCalledWith({
+      // Follow-up query: the zone's AVAILABLE tables no longer exist.
+      const remaining = await prisma.table.findMany({
+        where: { zoneId: 'z1' },
+      });
+      expect(remaining).toEqual([]);
+      expect(txTableDeleteMany).toHaveBeenCalledWith({
         where: { zoneId: 'z1', restaurantId: user.restaurantId },
-        data: { zoneId: null },
       });
       expect(txZoneDelete).toHaveBeenCalledWith({ where: { id: 'z1' } });
     });

@@ -76,32 +76,26 @@ describe('Zone code & table naming (e2e)', () => {
         .expect(400);
     });
 
-    it('rejects a duplicate code (case-insensitively) with 400', async () => {
-      const code = `C${String(Date.now()).slice(-9)}`;
-      await request(app.getHttpServer())
-        .post('/api/zones')
-        .set(auth(adminToken))
-        .send({ name: `Code1_${Date.now()}`, code })
-        .expect(201);
-
+    it('computes the code server-side from the name, ignoring the client code', async () => {
       const res = await request(app.getHttpServer())
         .post('/api/zones')
         .set(auth(adminToken))
-        .send({ name: `Code2_${Date.now()}`, code: code.toLowerCase() })
-        .expect(400);
+        .send({ name: `Terraza_${Date.now()}`, code: '999' })
+        .expect(201);
 
-      expect(res.body.message).toMatch(/already exists/i);
+      expect(res.body.code).toMatch(/^TER/);
+      expect(res.body.code).not.toBe('999');
     });
   });
 
   describe('GET /zones/:id/next-table-name', () => {
     it('suggests "{code}01" for an empty zone', async () => {
-      const code = `N${String(Date.now()).slice(-9)}`;
       const zone = await request(app.getHttpServer())
         .post('/api/zones')
         .set(auth(adminToken))
-        .send({ name: `Next_${Date.now()}`, code })
+        .send({ name: `Next_${Date.now()}`, code: 'ignored' })
         .expect(201);
+      const code = zone.body.code;
 
       const res = await request(app.getHttpServer())
         .get(`/api/zones/${zone.body.id}/next-table-name`)
@@ -112,12 +106,12 @@ describe('Zone code & table naming (e2e)', () => {
     });
 
     it('reuses a gap left by a deleted table ({code}01 and {code}03 exist)', async () => {
-      const code = `G${String(Date.now()).slice(-9)}`;
       const zone = await request(app.getHttpServer())
         .post('/api/zones')
         .set(auth(adminToken))
-        .send({ name: `Gap_${Date.now()}`, code })
+        .send({ name: `Gap_${Date.now()}`, code: 'ignored' })
         .expect(201);
+      const code = zone.body.code;
 
       await prisma.table.createMany({
         data: [

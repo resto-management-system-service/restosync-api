@@ -15,11 +15,15 @@ export class ZonesService {
   constructor(private readonly prisma: PrismaService) {}
 
   async create(dto: CreateZoneDto, user: AuthUser) {
-    await this.assertCodeUnique(dto.code, user);
+    const existing = await this.prisma.zone.findMany({
+      where: { restaurantId: user.restaurantId },
+      select: { name: true, code: true },
+    });
+    const code = this.computeZoneCode(dto.name, existing);
     return this.prisma.zone.create({
       data: {
         name: dto.name,
-        code: dto.code,
+        code,
         sortOrder: dto.sortOrder ?? 0,
         restaurantId: user.restaurantId,
       },
@@ -95,15 +99,47 @@ export class ZonesService {
       );
     }
 
-    // Unassign (never delete) the zone's AVAILABLE tables, then remove the
-    // zone — atomically, so a table is never left pointing at a deleted zone.
+    // Cascade-delete the zone's tables (all AVAILABLE by this point), then
+    // remove the zone — atomically, so no orphaned tables remain.
     return this.prisma.$transaction(async (tx) => {
-      await tx.table.updateMany({
+      await tx.table.deleteMany({
         where: { zoneId: id, restaurantId: user.restaurantId },
-        data: { zoneId: null },
       });
       return tx.zone.delete({ where: { id } });
     });
+  }
+
+  private computeZoneCode(
+    name: string,
+    existing: { name: string; code: string }[],
+  ): string {
+    const rawLeadingWord = name.trim().split(/\s+/)[0] ?? '';
+    const isPiso = rawLeadingWord.toLowerCase() === 'piso';
+
+    const prefix = isPiso
+      ? ''
+      : (() => {
+          const upper = rawLeadingWord.toUpperCase();
+          return upper.length <= 3 ? upper : upper.slice(0, 3);
+        })();
+
+    // Track codes that would collide. For "Piso" zones the code is a bare
+    // number, so only other "Piso"-named zones share its numbering space; other
+    // categories always carry a letter prefix and never collide numerically.
+    const used = new Set<string>();
+    for (const zone of existing) {
+      if (isPiso) {
+        const zoneLeadingWord = zone.name.trim().split(/\s+/)[0] ?? '';
+        if (zoneLeadingWord.toLowerCase() !== 'piso') continue;
+      }
+      used.add(normalizeName(zone.code));
+    }
+
+    let n = 1;
+    while (used.has(normalizeName(`${prefix}${n}`))) {
+      n += 1;
+    }
+    return `${prefix}${n}`;
   }
 
   private async assertCodeUnique(
