@@ -307,6 +307,10 @@ describe('PaymentsService', () => {
       );
 
       expect(result).toEqual({ id: 'payment-1' });
+      expect(txOrderUpdate).toHaveBeenCalledWith({
+        where: { id: orderId },
+        data: { status: OrderStatus.CONFIRMED },
+      });
       expect(realtimeGateway.emitTableStatusChanged).toHaveBeenCalled();
     });
 

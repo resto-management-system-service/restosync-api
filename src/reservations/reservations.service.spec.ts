@@ -683,6 +683,41 @@ describe('ReservationsService', () => {
       });
     });
 
+    it('WITH_PREORDER: still seats when the table emission throws (best-effort)', async () => {
+      prisma.reservation.findUnique.mockResolvedValue({
+        id: reservationId,
+        restaurantId: user.restaurantId,
+        status: ReservationStatus.CONFIRMED,
+        reservationType: ReservationType.WITH_PREORDER,
+        orderId: 'order-1',
+        tableId,
+        table: { zoneId: 'zone-1' },
+      });
+      prisma.table.update.mockResolvedValue({});
+      prisma.reservation.update.mockResolvedValue({});
+      prisma.order.update.mockResolvedValue({
+        id: 'order-1',
+        tableId,
+        items: [],
+      });
+      realtimeGateway.emitTableStatusChanged.mockImplementation(() => {
+        throw new Error('socket server unavailable');
+      });
+
+      const result = await service.seat(reservationId, {}, user);
+
+      expect(result.id).toBe('order-1');
+      expect(prisma.table.update).toHaveBeenCalledWith({
+        where: { id: tableId },
+        data: { status: TableStatus.OCCUPIED },
+      });
+      expect(prisma.reservation.update).toHaveBeenCalledWith({
+        where: { id: reservationId },
+        data: { status: ReservationStatus.SEATED },
+      });
+      expect(realtimeGateway.emitTableStatusChanged).toHaveBeenCalled();
+    });
+
     it('DEPOSIT_ONLY: creates a new (empty) order via OrdersService.create and links it, WITHOUT applying the discount yet', async () => {
       prisma.reservation.findUnique.mockResolvedValue({
         id: reservationId,
@@ -919,6 +954,43 @@ describe('ReservationsService', () => {
         status: TableStatus.AVAILABLE,
         zoneId: 'zone-1',
       });
+    });
+
+    it('noShow still marks the reservation NO_SHOW when the table emission throws (best-effort)', async () => {
+      prisma.reservation.findUnique.mockResolvedValue({
+        id: reservationId,
+        restaurantId: user.restaurantId,
+        status: ReservationStatus.CONFIRMED,
+        tableId,
+        depositCents: 1000,
+        table: { zoneId: 'zone-1' },
+      });
+      const txTableFindUnique = jest
+        .fn()
+        .mockResolvedValue({ id: tableId, status: TableStatus.RESERVED });
+      const txTableUpdate = jest.fn().mockResolvedValue({});
+      const txReservationUpdate = jest.fn().mockResolvedValue({
+        id: reservationId,
+        status: ReservationStatus.NO_SHOW,
+      });
+      prisma.$transaction.mockImplementationOnce((cb) =>
+        cb({
+          table: { findUnique: txTableFindUnique, update: txTableUpdate },
+          reservation: { update: txReservationUpdate },
+        }),
+      );
+      realtimeGateway.emitTableStatusChanged.mockImplementation(() => {
+        throw new Error('socket server unavailable');
+      });
+
+      const result = await service.noShow(reservationId, user);
+
+      expect(result.status).toBe(ReservationStatus.NO_SHOW);
+      expect(txTableUpdate).toHaveBeenCalledWith({
+        where: { id: tableId },
+        data: { status: TableStatus.AVAILABLE },
+      });
+      expect(realtimeGateway.emitTableStatusChanged).toHaveBeenCalled();
     });
 
     it('cancel releases the table only if it is currently RESERVED', async () => {
