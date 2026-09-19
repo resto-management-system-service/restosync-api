@@ -85,12 +85,14 @@ type MockConfigService = {
 type MockRealtimeGateway = {
   emitStatusChanged: jest.Mock;
   emitTotalsChanged: jest.Mock;
+  emitTableStatusChanged: jest.Mock;
 };
 
 function createMockRealtimeGateway(): MockRealtimeGateway {
   return {
     emitStatusChanged: jest.fn().mockResolvedValue(undefined),
     emitTotalsChanged: jest.fn().mockResolvedValue(undefined),
+    emitTableStatusChanged: jest.fn().mockResolvedValue(undefined),
   };
 }
 
@@ -313,6 +315,43 @@ describe('OrdersService', () => {
         data: { status: TableStatus.OCCUPIED },
       });
       expect(result.totalCents).toBe(1200);
+    });
+
+    it('emits table.status_changed OCCUPIED after the table is set OCCUPIED', async () => {
+      prisma.table.findFirst.mockResolvedValue({
+        id: tableId,
+        status: TableStatus.AVAILABLE,
+        zoneId: 'zone-1',
+      });
+
+      await service.create(dto as any, user.restaurantId, user.id);
+
+      expect(realtimeGateway.emitTableStatusChanged).toHaveBeenCalledWith({
+        tableId,
+        restaurantId: user.restaurantId,
+        status: TableStatus.OCCUPIED,
+        zoneId: 'zone-1',
+      });
+    });
+
+    it('still creates the order when the table emission throws (best-effort)', async () => {
+      prisma.table.findFirst.mockResolvedValue({
+        id: tableId,
+        status: TableStatus.AVAILABLE,
+        zoneId: 'zone-1',
+      });
+      realtimeGateway.emitTableStatusChanged.mockImplementation(() => {
+        throw new Error('socket server unavailable');
+      });
+
+      const result = await service.create(
+        dto as any,
+        user.restaurantId,
+        user.id,
+      );
+
+      expect(result.totalCents).toBe(1200);
+      expect(realtimeGateway.emitTableStatusChanged).toHaveBeenCalled();
     });
 
     it('returns the existing active order instead of creating a duplicate when the table is OCCUPIED', async () => {

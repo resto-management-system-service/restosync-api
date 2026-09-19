@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -16,6 +17,7 @@ import { AuthUser } from '../auth/decorators/current-user.decorator';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateOrderDto } from '../orders/dto/create-order.dto';
 import { OrdersService } from '../orders/orders.service';
+import { RealtimeGateway } from '../realtime/realtime.gateway';
 import { localToUtc, utcToLocalDisplay } from '../common/utils/local-time';
 import { CreateReservationDto } from './dto/create-reservation.dto';
 import { ListReservationsQueryDto } from './dto/list-reservations-query.dto';
@@ -42,10 +44,13 @@ const DEFAULT_TOLERANCE_BY_TYPE: Record<ReservationType, number> = {
 
 @Injectable()
 export class ReservationsService {
+  private readonly logger = new Logger(ReservationsService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly ordersService: OrdersService,
     private readonly config: ConfigService,
+    private readonly realtimeGateway: RealtimeGateway,
   ) {}
 
   async create(dto: CreateReservationDto, user: AuthUser) {
@@ -139,6 +144,7 @@ export class ReservationsService {
   async findOne(id: string, user: AuthUser) {
     const reservation = await this.prisma.reservation.findUnique({
       where: { id },
+      include: { table: { select: { zoneId: true } } },
     });
     if (!reservation || reservation.restaurantId !== user.restaurantId) {
       throw new NotFoundException('Reservation not found');
@@ -185,6 +191,19 @@ export class ReservationsService {
         },
       });
     });
+
+    if (reservation.tableId) {
+      const tableId = reservation.tableId;
+      await this.emitRealtimeEvent('table.status_changed', tableId, () =>
+        this.realtimeGateway.emitTableStatusChanged({
+          tableId,
+          restaurantId: reservation.restaurantId,
+          status: TableStatus.RESERVED,
+          zoneId: reservation.table?.zoneId ?? null,
+        }),
+      );
+    }
+
     return this.withReservedForLocal(updated);
   }
 
@@ -212,6 +231,8 @@ export class ReservationsService {
     id: string;
     orderId: string | null;
     tableId: string | null;
+    restaurantId: string;
+    table: { zoneId: string | null } | null;
   }) {
     if (!reservation.orderId || !reservation.tableId) {
       throw new BadRequestException(
@@ -234,6 +255,16 @@ export class ReservationsService {
         include: { items: true },
       }),
     ]);
+
+    const tableId = reservation.tableId;
+    await this.emitRealtimeEvent('table.status_changed', tableId, () =>
+      this.realtimeGateway.emitTableStatusChanged({
+        tableId,
+        restaurantId: reservation.restaurantId,
+        status: TableStatus.OCCUPIED,
+        zoneId: reservation.table?.zoneId ?? null,
+      }),
+    );
 
     return order;
   }
@@ -352,6 +383,7 @@ export class ReservationsService {
       );
     }
 
+    let releasedTableId: string | null = null;
     const updated = await this.prisma.$transaction(async (tx) => {
       if (reservation.tableId) {
         const table = await tx.table.findUnique({
@@ -362,6 +394,7 @@ export class ReservationsService {
             where: { id: reservation.tableId },
             data: { status: TableStatus.AVAILABLE },
           });
+          releasedTableId = reservation.tableId;
         }
       }
       return tx.reservation.update({
@@ -369,7 +402,37 @@ export class ReservationsService {
         data: { status: nextStatus },
       });
     });
+
+    if (releasedTableId) {
+      const tableId = releasedTableId;
+      await this.emitRealtimeEvent('table.status_changed', tableId, () =>
+        this.realtimeGateway.emitTableStatusChanged({
+          tableId,
+          restaurantId: reservation.restaurantId,
+          status: TableStatus.AVAILABLE,
+          zoneId: reservation.table?.zoneId ?? null,
+        }),
+      );
+    }
+
     return this.withReservedForLocal(updated);
+  }
+
+  // Real-time notification is best-effort (mirrors OrdersService's wrapper):
+  // a failure to emit must never break the underlying reservation operation,
+  // but it must always leave a warn-level trace.
+  private async emitRealtimeEvent(
+    eventType: 'table.status_changed',
+    subjectId: string,
+    emit: () => void | Promise<void>,
+  ): Promise<void> {
+    try {
+      await emit();
+    } catch (err) {
+      this.logger.warn(
+        `Failed to emit realtime event ${eventType} for ${subjectId}: ${err}`,
+      );
+    }
   }
 
   private baseReservationData(
